@@ -10,6 +10,8 @@ struct _RclHome { GDBusNodeInfo *node; guint registration_id; };
 
 static const gchar xml[] =
 "<node><interface name='org.freedesktop.home1.Manager'>"
+" <method name='GetUserRecordByUID'><arg name='uid' type='u' direction='in'/><arg name='record' type='a{sv}' direction='out'/><arg name='incomplete' type='b' direction='out'/></method>"
+"<method name='GetUserRecordByName'><arg name='user_name' type='s' direction='in'/><arg name='record' type='a{sv}' direction='out'/><arg name='incomplete' type='b' direction='out'/></method>"
 "<method name='GetHomeByName'><arg name='user_name' type='s' direction='in'/><arg name='uid' type='u' direction='out'/><arg name='home_state' type='s' direction='out'/><arg name='gid' type='u' direction='out'/><arg name='real_name' type='s' direction='out'/><arg name='home_directory' type='s' direction='out'/><arg name='shell' type='s' direction='out'/><arg name='bus_path' type='o' direction='out'/></method>"
 "<method name='GetHomeByUID'><arg name='uid' type='u' direction='in'/><arg name='user_name' type='s' direction='out'/><arg name='home_state' type='s' direction='out'/><arg name='gid' type='u' direction='out'/><arg name='real_name' type='s' direction='out'/><arg name='home_directory' type='s' direction='out'/><arg name='shell' type='s' direction='out'/><arg name='bus_path' type='o' direction='out'/></method>"
 "<method name='ListHomes'><arg name='home_areas' type='a(susussso)' direction='out'/></method>"
@@ -40,11 +42,48 @@ return_user(GDBusMethodInvocation *inv, struct passwd *pw, gboolean name_first)
 }
 
 static void
+return_user_record(GDBusMethodInvocation *inv, struct passwd *pw)
+{
+    GVariantBuilder record;
+    g_variant_builder_init(&record, G_VARIANT_TYPE("a{sv}"));
+    g_variant_builder_add(&record, "{sv}", "userName", g_variant_new_string(pw->pw_name ? pw->pw_name : ""));
+    g_variant_builder_add(&record, "{sv}", "uid", g_variant_new_uint32((guint32) pw->pw_uid));
+    g_variant_builder_add(&record, "{sv}", "gid", g_variant_new_uint32((guint32) pw->pw_gid));
+    g_variant_builder_add(&record, "{sv}", "realName", g_variant_new_string(pw->pw_gecos ? pw->pw_gecos : ""));
+    g_variant_builder_add(&record, "{sv}", "homeDirectory", g_variant_new_string(pw->pw_dir ? pw->pw_dir : ""));
+    g_variant_builder_add(&record, "{sv}", "shell", g_variant_new_string((pw->pw_shell && *pw->pw_shell) ? pw->pw_shell : "/bin/sh"));
+    g_variant_builder_add(&record, "{sv}", "service", g_variant_new_string("nss"));
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(a{sv}b)", &record, FALSE));
+}
+
+static void
 method_call(GDBusConnection *conn, const gchar *sender, const gchar *obj,
             const gchar *iface, const gchar *method, GVariant *params,
             GDBusMethodInvocation *inv, gpointer user_data)
 {
     (void) conn; (void) sender; (void) obj; (void) iface; (void) user_data;
+    if (g_str_equal(method, "GetUserRecordByUID")) {
+        guint uid;
+        g_variant_get(params, "(u)", &uid);
+        struct passwd *pw = getpwuid((uid_t) uid);
+        if (!pw) {
+            g_dbus_method_invocation_return_dbus_error(inv, "org.freedesktop.home1.NoSuchUser", "No local account with that UID");
+            return;
+        }
+        return_user_record(inv, pw);
+        return;
+    }
+    if (g_str_equal(method, "GetUserRecordByName")) {
+        const gchar *name;
+        g_variant_get(params, "(&s)", &name);
+        struct passwd *pw = getpwnam(name);
+        if (!pw) {
+            g_dbus_method_invocation_return_dbus_error(inv, "org.freedesktop.home1.NoSuchUser", "No local account with that name");
+            return;
+        }
+        return_user_record(inv, pw);
+        return;
+    }
     if (g_str_equal(method, "GetHomeByName")) {
         const gchar *name;
         g_variant_get(params, "(&s)", &name);
