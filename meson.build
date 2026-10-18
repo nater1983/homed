@@ -32,6 +32,4 @@ subdir('data')
 if get_option('tests')
   subdir('tests')
 endif
-install_data('README.md', 'AUTHORS', 'COPYING', 'ChangeLog.md',
-  install_dir: join_paths(get_option('datadir'), 'doc', 'homed'))
 summary({'Tests': get_option('tests'), 'Privileged group': get_option('privileged-group')}, section: 'Configuration')
