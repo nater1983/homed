@@ -1,0 +1,5 @@
+option('tests', type: 'boolean', value: true, description: 'Build and register test suite')
+option('dbus_system_service_dir', type: 'string', value: '', description: 'D-Bus system service directory (default: datadir/dbus-1/system-services)')
+option('dbus_system_conf_dir', type: 'string', value: '', description: 'D-Bus system policy directory (default: datadir/dbus-1/system.d)')
+option('polkit_policy_dir', type: 'string', value: '', description: 'Polkit policy directory (default: polkit actiondir)')
+option('privileged-group', type: 'string', value: 'wheel', description: 'Privileged group for Polkit rules')

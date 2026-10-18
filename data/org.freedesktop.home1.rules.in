@@ -1,0 +1,8 @@
+/* Local administrator group policy for homed. */
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.freedesktop.home1.manage-home" ||
+         action.id == "org.freedesktop.home1.activate-home") &&
+        subject.isInGroup("@PRIVILEGED_GROUP@")) {
+        return polkit.Result.YES;
+    }
+});

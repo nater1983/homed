@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<node name="/org/freedesktop/home1">
+  <interface name="org.freedesktop.home1.Manager">
+    <method name="GetHomeByName"><arg name="user_name" type="s" direction="in"/><arg name="uid" type="u" direction="out"/><arg name="home_state" type="s" direction="out"/><arg name="gid" type="u" direction="out"/><arg name="real_name" type="s" direction="out"/><arg name="home_directory" type="s" direction="out"/><arg name="shell" type="s" direction="out"/><arg name="bus_path" type="o" direction="out"/></method>
+    <method name="GetHomeByUID"><arg name="uid" type="u" direction="in"/><arg name="user_name" type="s" direction="out"/><arg name="home_state" type="s" direction="out"/><arg name="gid" type="u" direction="out"/><arg name="real_name" type="s" direction="out"/><arg name="home_directory" type="s" direction="out"/><arg name="shell" type="s" direction="out"/><arg name="bus_path" type="o" direction="out"/></method>
+    <method name="ListHomes"><arg name="home_areas" type="a(susussso)" direction="out"/></method>
+    <property name="AutoLogin" type="a(sso)" access="read"/>
+  </interface>
+</node>

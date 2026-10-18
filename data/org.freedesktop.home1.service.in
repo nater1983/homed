@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.freedesktop.home1
+Exec=@LIBEXECDIR@/homed
+User=root

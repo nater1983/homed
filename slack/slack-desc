@@ -1,0 +1,16 @@
+# HOW TO EDIT THIS FILE:
+# The "handy ruler" below makes it easier to edit this file.
+
+         |-----handy-ruler------------------------------------------------------|
+homed: homed (org.freedesktop.home1 D-Bus service)
+homed:
+homed: A non-systemd compatibility service for org.freedesktop.home1.
+homed: Built using GLib/GIO, Meson, and Polkit, following the hostnamed
+homed: project conventions. This initial release supports read-only home
+homed: account lookups from the system NSS/passwd database.
+homed:
+homed: This is not yet a complete systemd-homed replacement and does not
+homed: implement encrypted home storage or home activation/management.
+homed:
+homed:
+homed:
