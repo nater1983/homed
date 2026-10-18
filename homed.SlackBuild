@@ -28,7 +28,7 @@ ninja -C build
 meson test -C build --print-errorlogs
 DESTDIR="$PKG" ninja -C build install
 mkdir -p "$PKG/usr/doc/$PRGNAM-$VERSION" "$PKG/install"
-cp README.md AUTHORS COPYING ChangeLog.md "$PKG/usr/doc/$PRGNAM-$VERSION/"
+cp README.md AUTHORS LICENSE ChangeLog.md "$PKG/usr/doc/$PRGNAM-$VERSION/"
 cp slack/slack-desc "$PKG/install/slack-desc"
 cd "$PKG"
 /sbin/makepkg -l y -c n "$OUTPUT/$PRGNAM-$VERSION-$ARCH-$BUILD$TAG.$PKGTYPE"
