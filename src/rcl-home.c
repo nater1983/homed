@@ -202,7 +202,26 @@ void rcl_home_free(RclHome *self) {
 gboolean rcl_home_register(RclHome *self,GDBusConnection *connection,GError **error) {
     struct passwd *pw;
     g_return_val_if_fail(self!=NULL,FALSE); g_return_val_if_fail(G_IS_DBUS_CONNECTION(connection),FALSE);
-    if (self->registration_id) return TRUE;
+    if (self->registration_id && self->connection == connection) return TRUE;
+
+    /* A system-bus restart can give us a new connection. Drop registrations
+     * tied to the old connection before registering on the replacement. */
+    if (self->connection && self->connection != connection) {
+        if (self->registration_id) {
+            g_dbus_connection_unregister_object(self->connection, self->registration_id);
+            self->registration_id = 0;
+        }
+        for (guint i = 0; i < self->homes->len; i++) {
+            HomeEntry *h = g_ptr_array_index(self->homes, i);
+            if (h->registration_id) {
+                g_dbus_connection_unregister_object(self->connection, h->registration_id);
+                h->registration_id = 0;
+            }
+        }
+        g_hash_table_remove_all(self->homes_by_uid);
+        g_ptr_array_set_size(self->homes, 0);
+        g_clear_object(&self->connection);
+    }
     self->connection=g_object_ref(connection);
     self->registration_id=g_dbus_connection_register_object(connection,OBJECT_PATH,self->node->interfaces[0],&manager_vtable,self,NULL,error);
     if (!self->registration_id) { g_clear_object(&self->connection); return FALSE; }
