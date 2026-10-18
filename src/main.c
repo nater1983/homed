@@ -12,7 +12,7 @@ static void bus_acquired(GDBusConnection *connection,const gchar *name,gpointer 
         syslog(LOG_ERR,"cannot register D-Bus objects: %s",error?error->message:"unknown error");
         g_clear_error(&error); g_main_loop_quit(main_loop); return;
     }
-    syslog(LOG_INFO,"homed registered %s at %s",name,HOMED_OBJECT_PATH);
+    syslog(LOG_INFO,"homed D-Bus object registered at %s",HOMED_OBJECT_PATH);
 }
 static void name_lost(GDBusConnection *connection,const gchar *name,gpointer data) {
     (void)connection;(void)data; syslog(LOG_ERR,"lost or could not acquire D-Bus name %s",name);
@@ -24,6 +24,7 @@ int main(void) {
     if (!home_service) { syslog(LOG_ERR,"cannot initialize home1 service"); closelog(); return 1; }
     main_loop=g_main_loop_new(NULL,FALSE);
     owner=g_bus_own_name(G_BUS_TYPE_SYSTEM,HOMED_BUS_NAME,G_BUS_NAME_OWNER_FLAGS_NONE,bus_acquired,NULL,name_lost,NULL,NULL);
-    syslog(LOG_INFO,"homed started (0.2.0)"); g_main_loop_run(main_loop);
+    syslog(LOG_INFO,"homed started (0.2.0)");
+    g_main_loop_run(main_loop);
     g_bus_unown_name(owner); rcl_home_free(home_service); g_main_loop_unref(main_loop); closelog(); return 0;
 }
