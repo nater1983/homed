@@ -1,12 +1,21 @@
 # homed
 
-A Slackware-oriented, non-systemd implementation of a limited `org.freedesktop.home1` D-Bus compatibility service, following the build and packaging conventions of [`nater1983/hostnamed`](https://github.com/nater1983/hostnamed) `main`.
+A Slackware-oriented, non-systemd implementation of a limited `org.freedesktop.home1` D-Bus compatibility service, following the build and packaging conventions of [`nater1983/hostnamed`](https://github.com/nater1983/hostnamed).
 
 ## Scope and safety
 
-This initial release is a **read-only compatibility layer**, not a replacement for `systemd-homed`. It provides the system bus name `org.freedesktop.home1` at `/org/freedesktop/home1` and implements `GetHomeByName`, `GetHomeByUID`, `ListHomes`, and the empty `AutoLogin` property from local NSS/passwd records. Accounts are reported as `inactive`. It does not create, remove, encrypt, resize, lock, or activate managed home areas. Do not use it as an encrypted-home backend or wire it into login activation expecting those operations to work.
+This release is an **NSS-backed compatibility layer**, not a complete replacement for `systemd-homed`. It provides the system bus name `org.freedesktop.home1` at `/org/freedesktop/home1`.
 
-Polkit policy and rules are installed in the same manner as the hostnamed project; management actions are reserved for future implementation and are not exposed by this version. No systemd units, systemd libraries, or systemd init scripts are installed.
+Implemented manager calls:
+- `GetHomeByName`, `GetHomeByUID`, and `ListHomes`
+- `GetUserRecordByName`, `GetUserRecordByUID`, and `GetUserRecordByPID`
+- The read-only `AutoLogin` property (currently empty)
+
+User records are derived from NSS/passwd fields. They intentionally return `incomplete=true`, because NSS does not provide managed-home storage, binding, signature, or secret metadata. Each discovered NSS account has a per-home object at `/org/freedesktop/home1/home/_UID` exposing read-only account properties. The object declares `Activate`, `Deactivate`, `Lock`, `Unlock`, and `Resize`, but these operations return `org.freedesktop.home1.NotSupported` because no managed storage backend exists.
+
+The per-home interface declares `Changed` and `Removed` signals for future state-changing operations; this version does not perform lifecycle mutations and therefore does not emit them. It does not create, remove, encrypt, resize, lock, or activate managed home areas. Do not use it as an encrypted-home backend or wire it into login activation expecting those operations to work.
+
+Polkit policy files may be installed for future management work, but this compatibility layer does not yet implement home-management authorization or storage operations. No systemd units, systemd libraries, or systemd init scripts are installed.
 
 ## Build
 
@@ -24,9 +33,12 @@ DESTDIR="$PWD/stage" ninja -C build install
 ```sh
 busctl --system introspect org.freedesktop.home1 /org/freedesktop/home1
 busctl --system call org.freedesktop.home1 /org/freedesktop/home1 org.freedesktop.home1.Manager GetHomeByName s root
+busctl --system call org.freedesktop.home1 /org/freedesktop/home1 org.freedesktop.home1.Manager GetUserRecordByName s root
+busctl --system call org.freedesktop.home1 /org/freedesktop/home1 org.freedesktop.home1.Manager GetUserRecordByPID u 1
 busctl --system call org.freedesktop.home1 /org/freedesktop/home1 org.freedesktop.home1.Manager ListHomes
+busctl --system introspect org.freedesktop.home1 /org/freedesktop/home1/home/_0
 ```
 
 ## Status
 
-This is a first packaging baseline. Full `systemd-homed` compatibility requires implementing and testing the per-home object API, Create/Register/Activate/Deactivate/Remove operations, user-record parsing, storage backends, and authorization before it can be considered a functional home manager.
+The current scope covers lookup, honest incomplete records, and per-home object introspection. Full compatibility still requires accurate systemd-homed record semantics, Create/Register/Activate/Deactivate/Remove operations, storage backends, signals tied to actual changes, and authorization before it can be considered a functional home manager.
