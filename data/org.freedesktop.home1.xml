@@ -3,9 +3,18 @@
   <interface name="org.freedesktop.home1.Manager">
     <method name="GetUserRecordByUID"><arg name="uid" type="u" direction="in"/><arg name="record" type="a{sv}" direction="out"/><arg name="incomplete" type="b" direction="out"/></method>
     <method name="GetUserRecordByName"><arg name="user_name" type="s" direction="in"/><arg name="record" type="a{sv}" direction="out"/><arg name="incomplete" type="b" direction="out"/></method>
+    <method name="GetUserRecordByPID"><arg name="pid" type="u" direction="in"/><arg name="record" type="a{sv}" direction="out"/><arg name="incomplete" type="b" direction="out"/></method>
     <method name="GetHomeByName"><arg name="user_name" type="s" direction="in"/><arg name="uid" type="u" direction="out"/><arg name="home_state" type="s" direction="out"/><arg name="gid" type="u" direction="out"/><arg name="real_name" type="s" direction="out"/><arg name="home_directory" type="s" direction="out"/><arg name="shell" type="s" direction="out"/><arg name="bus_path" type="o" direction="out"/></method>
     <method name="GetHomeByUID"><arg name="uid" type="u" direction="in"/><arg name="user_name" type="s" direction="out"/><arg name="home_state" type="s" direction="out"/><arg name="gid" type="u" direction="out"/><arg name="real_name" type="s" direction="out"/><arg name="home_directory" type="s" direction="out"/><arg name="shell" type="s" direction="out"/><arg name="bus_path" type="o" direction="out"/></method>
     <method name="ListHomes"><arg name="home_areas" type="a(susussso)" direction="out"/></method>
     <property name="AutoLogin" type="a(sso)" access="read"/>
+  </interface>
+  <interface name="org.freedesktop.home1.Home">
+    <method name="Activate"/><method name="Deactivate"/><method name="Lock"/><method name="Unlock"/>
+    <method name="Resize"><arg name="disk_size" type="t" direction="in"/></method>
+    <property name="UserName" type="s" access="read"/><property name="UID" type="u" access="read"/><property name="GID" type="u" access="read"/>
+    <property name="RealName" type="s" access="read"/><property name="HomeDirectory" type="s" access="read"/><property name="Shell" type="s" access="read"/>
+    <property name="State" type="s" access="read"/><property name="Service" type="s" access="read"/>
+    <signal name="Changed"/><signal name="Removed"/>
   </interface>
 </node>
