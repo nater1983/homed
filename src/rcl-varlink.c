@@ -236,19 +236,27 @@ user_lookup(JsonObject *parameters, GOutputStream *output, GError **error)
         return send_error(output, USER_DATABASE ".EnumerationNotSupported",
                           error);
 
-    if (name != NULL)
+    uid_t name_uid = (uid_t) -1;
+
+    if (name != NULL) {
         by_name = getpwnam(name);
+        if (by_name != NULL)
+            name_uid = by_name->pw_uid;
+    }
+
     if (has_uid && uid <= (guint64) ((uid_t) -1))
         by_uid = getpwuid((uid_t) uid);
 
     if (name != NULL && has_uid) {
-        if (by_name != NULL && by_uid != NULL &&
-            by_name->pw_uid == by_uid->pw_uid)
-            user = by_name;
-        else if (by_name != NULL || by_uid != NULL)
+        if (by_name == NULL && by_uid == NULL)
+            return send_error(output, USER_DATABASE ".NoRecordFound", error);
+
+        if (by_name == NULL || by_uid == NULL || name_uid != by_uid->pw_uid)
             return send_error(output,
                               USER_DATABASE ".ConflictingRecordFound",
                               error);
+
+        user = by_uid;
     } else {
         user = name != NULL ? by_name : by_uid;
     }
@@ -273,19 +281,27 @@ group_lookup(JsonObject *parameters, GOutputStream *output, GError **error)
         return send_error(output, USER_DATABASE ".EnumerationNotSupported",
                           error);
 
-    if (name != NULL)
+    gid_t name_gid = (gid_t) -1;
+
+    if (name != NULL) {
         by_name = getgrnam(name);
+        if (by_name != NULL)
+            name_gid = by_name->gr_gid;
+    }
+
     if (has_gid && gid <= (guint64) ((gid_t) -1))
         by_gid = getgrgid((gid_t) gid);
 
     if (name != NULL && has_gid) {
-        if (by_name != NULL && by_gid != NULL &&
-            by_name->gr_gid == by_gid->gr_gid)
-            group = by_name;
-        else if (by_name != NULL || by_gid != NULL)
+        if (by_name == NULL && by_gid == NULL)
+            return send_error(output, USER_DATABASE ".NoRecordFound", error);
+
+        if (by_name == NULL || by_gid == NULL || name_gid != by_gid->gr_gid)
             return send_error(output,
                               USER_DATABASE ".ConflictingRecordFound",
                               error);
+
+        group = by_gid;
     } else {
         group = name != NULL ? by_name : by_gid;
     }
@@ -497,18 +513,24 @@ serve_connection(gpointer data)
     GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
     GByteArray *request = g_byte_array_new();
     guint8 byte;
+    gboolean terminated = FALSE;
     GError *error = NULL;
 
     while (request->len < MAX_REQUEST_SIZE) {
         gssize bytes_read = g_input_stream_read(input, &byte, 1, NULL, &error);
 
-        if (bytes_read <= 0 || byte == '\0')
+        if (bytes_read <= 0)
             break;
+
+        if (byte == '\0') {
+            terminated = TRUE;
+            break;
+        }
 
         g_byte_array_append(request, &byte, 1);
     }
 
-    if (error == NULL && request->len > 0 &&
+    if (error == NULL && terminated && request->len > 0 &&
         request->len < MAX_REQUEST_SIZE) {
         const guint8 terminator = 0;
 
