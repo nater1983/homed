@@ -111,7 +111,7 @@ main(void)
         NULL);
 
     syslog(LOG_INFO,
-           "homed started (0.2.0); Varlink listening on "
+           "homed started (0.3.0); Varlink listening on "
            "/run/systemd/userdb/io.systemd.Home");
 
     g_main_loop_run(main_loop);

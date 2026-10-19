@@ -1,5 +1,15 @@
 # ChangeLog
 
+## 0.3.0
+
+- Added a Varlink listener at `/run/systemd/userdb/io.systemd.Home` for the `io.systemd.UserDatabase` interface.
+- Added NSS-backed `GetUserRecord`, `GetGroupRecord`, and `GetMemberships` lookups.
+- Marked NSS-derived user and group records as incomplete because they do not contain managed-home metadata.
+- Added Varlink request validation, NUL-terminated message handling, and errors for unsupported methods and lookup failures.
+- Added JSON-GLib as a build dependency for Varlink message parsing and serialization.
+- Updated the README and manual page with Varlink usage, build dependencies, and current compatibility limitations.
+- Improved Varlink source formatting and corrected name/ID lookup validation and request framing.
+
 ## 0.2.0
 
 - Corrected GetHomeByName and GetHomeByUID D-Bus output signatures and value order.
