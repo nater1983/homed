@@ -1,39 +1,646 @@
 #include "rcl-varlink.h"
+
 #include <gio/gunixsocketaddress.h>
 #include <glib/gstdio.h>
 #include <json-glib/json-glib.h>
-#include <pwd.h>
-#include <grp.h>
-#include <sys/stat.h>
+
 #include <errno.h>
+#include <grp.h>
+#include <pwd.h>
 #include <string.h>
-#define SOCKDIR "/run/systemd/userdb"
-#define SOCKPATH SOCKDIR "/io.systemd.Home"
-#define IFACE "io.systemd.UserDatabase"
-#define SERVICE "io.systemd.Home"
-#define MAX_REQUEST (1024U*1024U)
-static JsonObject *obj(void){return json_object_new();}
-static void str(JsonObject*o,const gchar*k,const gchar*v){json_object_set_string_member(o,k,v?v:"");}
-static void num(JsonObject*o,const gchar*k,guint64 v){json_object_set_int_member(o,k,(gint64)v);}
-static gchar *serialize(JsonObject*o){JsonNode*n=json_node_new(JSON_NODE_OBJECT);JsonGenerator*g=json_generator_new();gchar*s;json_node_take_object(n,o);json_generator_set_root(g,n);s=json_generator_to_data(g,NULL);g_object_unref(g);json_node_free(n);return s;}
-static gboolean send_json(GOutputStream*out,JsonObject*o,GError**e){gchar*s=serialize(o);gsize n=strlen(s);const gchar z=0;gboolean ok=g_output_stream_write_all(out,s,n,NULL,NULL,e);if(ok)ok=g_output_stream_write_all(out,&z,1,NULL,NULL,e);g_free(s);return ok;}
-static gboolean reply(GOutputStream*out,JsonObject*p,gboolean more,GError**e){JsonObject*r=obj();json_object_set_object_member(r,"parameters",p);json_object_set_boolean_member(r,"continues",more);return send_json(out,r,e);}
-static gboolean fail(GOutputStream*out,const gchar*name,GError**e){JsonObject*r=obj();json_object_set_string_member(r,"error",name);json_object_set_object_member(r,"parameters",obj());return send_json(out,r,e);}
-static JsonObject *user_record(const struct passwd*p){JsonObject*r=obj();str(r,"userName",p->pw_name);num(r,"uid",p->pw_uid);num(r,"gid",p->pw_gid);str(r,"realName",p->pw_gecos);str(r,"homeDirectory",p->pw_dir);str(r,"shell",(p->pw_shell&&*p->pw_shell)?p->pw_shell:"/bin/sh");str(r,"service",SERVICE);str(r,"disposition","regular");return r;}
-static JsonObject *group_record(const struct group*g){JsonObject*r=obj();JsonArray*a=json_array_new();str(r,"groupName",g->gr_name);num(r,"gid",g->gr_gid);str(r,"service",SERVICE);str(r,"disposition","regular");for(gchar**m=g->gr_mem;m&&*m;m++)json_array_add_string_element(a,*m);json_object_set_array_member(r,"members",a);return r;}
-static const gchar *getstr(JsonObject*o,const gchar*k){JsonNode*n;if(!json_object_has_member(o,k))return NULL;n=json_object_get_member(o,k);if(!n||JSON_NODE_HOLDS_NULL(n)||!JSON_NODE_HOLDS_VALUE(n)||json_node_get_value_type(n)!=G_TYPE_STRING)return NULL;return json_node_get_string(n);}
-static gboolean getnum(JsonObject*o,const gchar*k,guint64*v){JsonNode*n;GType t;if(!json_object_has_member(o,k))return FALSE;n=json_object_get_member(o,k);if(!n||!JSON_NODE_HOLDS_VALUE(n))return FALSE;t=json_node_get_value_type(n);if(t!=G_TYPE_INT&&t!=G_TYPE_INT64&&t!=G_TYPE_UINT&&t!=G_TYPE_UINT64&&t!=G_TYPE_LONG&&t!=G_TYPE_ULONG)return FALSE;if(json_node_get_int(n)<0)return FALSE;*v=(guint64)json_node_get_int(n);return TRUE;}
-static gboolean send_user(GOutputStream*out,const struct passwd*p,GError**e){JsonObject*r=obj();json_object_set_object_member(r,"record",user_record(p));json_object_set_boolean_member(r,"incomplete",TRUE);return reply(out,r,FALSE,e);}
-static gboolean send_group(GOutputStream*out,const struct group*g,GError**e){JsonObject*r=obj();json_object_set_object_member(r,"record",group_record(g));json_object_set_boolean_member(r,"incomplete",TRUE);return reply(out,r,FALSE,e);}
-static gboolean user_lookup(JsonObject*p,GOutputStream*out,GError**e){const gchar*n=getstr(p,"userName");guint64 uid=0;gboolean has=getnum(p,"uid",&uid);struct passwd*pw=NULL;if(n&&has){struct passwd*a=getpwnam(n),*b=uid<=(guint64)((uid_t)-1)?getpwuid((uid_t)uid):NULL;if(!a||!b||a->pw_uid!=b->pw_uid)return fail(out,IFACE ".ConflictingRecordFound",e);pw=a;}else if(n)pw=getpwnam(n);else if(has&&uid<=(guint64)((uid_t)-1))pw=getpwuid((uid_t)uid);else return fail(out,IFACE ".EnumerationNotSupported",e);return pw?send_user(out,pw,e):fail(out,IFACE ".NoRecordFound",e);}
-static gboolean group_lookup(JsonObject*p,GOutputStream*out,GError**e){const gchar*n=getstr(p,"groupName");guint64 gid=0;gboolean has=getnum(p,"gid",&gid);struct group*gr=NULL;if(n&&has){struct group*a=getgrnam(n),*b=gid<=(guint64)((gid_t)-1)?getgrgid((gid_t)gid):NULL;if(!a||!b||a->gr_gid!=b->gr_gid)return fail(out,IFACE ".ConflictingRecordFound",e);gr=a;}else if(n)gr=getgrnam(n);else if(has&&gid<=(guint64)((gid_t)-1))gr=getgrgid((gid_t)gid);else return fail(out,IFACE ".EnumerationNotSupported",e);return gr?send_group(out,gr,e):fail(out,IFACE ".NoRecordFound",e);}
-typedef struct{gchar*u,*g;} Pair;
-static void pair_free(gpointer d){Pair*p=d;g_free(p->u);g_free(p->g);g_free(p);}
-static void pair_add(GPtrArray*a,const gchar*u,const gchar*g){Pair*p=g_new0(Pair,1);p->u=g_strdup(u);p->g=g_strdup(g);g_ptr_array_add(a,p);}
-static gboolean member(const struct passwd*p,const struct group*g){if(p->pw_gid==g->gr_gid)return TRUE;for(gchar**m=g->gr_mem;m&&*m;m++)if(g_str_equal(*m,p->pw_name))return TRUE;return FALSE;}
-static gboolean memberships(JsonObject*p,GOutputStream*out,GError**e){const gchar*u=getstr(p,"userName"),*g=getstr(p,"groupName");GPtrArray*a=g_ptr_array_new_with_free_func(pair_free);if(u&&g){struct passwd*pw=getpwnam(u);struct group*gr=getgrnam(g);if(pw&&gr&&member(pw,gr))pair_add(a,u,g);}else if(u){struct passwd*pw=getpwnam(u);if(pw){int n=16;gid_t*ids=g_new(gid_t,n);if(getgrouplist(u,pw->pw_gid,ids,&n)<0){ids=g_renew(gid_t,ids,n);if(getgrouplist(u,pw->pw_gid,ids,&n)<0)n=0;}for(int i=0;i<n;i++){struct group*gr=getgrgid(ids[i]);if(gr)pair_add(a,u,gr->gr_name);}g_free(ids);}}else if(g){struct group*gr=getgrnam(g);if(gr){setpwent();struct passwd*pw;while((pw=getpwent())!=NULL)if(member(pw,gr))pair_add(a,pw->pw_name,g);endpwent();}}else{g_ptr_array_unref(a);return fail(out,IFACE ".EnumerationNotSupported",e);}if(!a->len){g_ptr_array_unref(a);return fail(out,IFACE ".NoRecordFound",e);}gboolean ok=TRUE;for(guint i=0;ok&&i<a->len;i++){Pair*x=g_ptr_array_index(a,i);JsonObject*r=obj();str(r,"userName",x->u);str(r,"groupName",x->g);ok=reply(out,r,i+1<a->len,e);}g_ptr_array_unref(a);return ok;}
-static gboolean dispatch(GOutputStream*out,const gchar*data,GError**e){JsonParser*parser=json_parser_new();JsonNode*root;JsonObject*req,*p;const gchar*m,*service;gboolean ok=FALSE;if(!json_parser_load_from_data(parser,data,-1,e)){g_clear_error(e);ok=fail(out,"org.varlink.service.InvalidParameter",e);goto done;}root=json_parser_get_root(parser);if(!root||!JSON_NODE_HOLDS_OBJECT(root)){ok=fail(out,"org.varlink.service.InvalidParameter",e);goto done;}req=json_node_get_object(root);m=getstr(req,"method");p=json_object_has_member(req,"parameters")&&JSON_NODE_HOLDS_OBJECT(json_object_get_member(req,"parameters"))?json_object_get_object_member(req,"parameters"):NULL;if(!m||!p){ok=fail(out,"org.varlink.service.InvalidParameter",e);goto done;}service=getstr(p,"service");if(!service||!g_str_equal(service,SERVICE))ok=fail(out,IFACE ".BadService",e);else if(g_str_equal(m,IFACE ".GetUserRecord"))ok=user_lookup(p,out,e);else if(g_str_equal(m,IFACE ".GetGroupRecord"))ok=group_lookup(p,out,e);else if(g_str_equal(m,IFACE ".GetMemberships"))ok=memberships(p,out,e);else ok=fail(out,"org.varlink.service.MethodNotFound",e);done:g_object_unref(parser);return ok;}
-static gpointer serve(gpointer d){GSocketConnection*c=d;GInputStream*in=g_io_stream_get_input_stream(G_IO_STREAM(c));GOutputStream*out=g_io_stream_get_output_stream(G_IO_STREAM(c));GByteArray*b=g_byte_array_new();guint8 ch;GError*e=NULL;while(b->len<MAX_REQUEST){gssize n=g_input_stream_read(in,&ch,1,NULL,&e);if(n<=0||ch==0)break;g_byte_array_append(b,&ch,1);}if(!e&&b->len>0&&b->len<MAX_REQUEST){const guint8 z=0;g_byte_array_append(b,&z,1);dispatch(out,(const gchar*)b->data,&e);}if(e){g_warning("Varlink request failed: %s",e->message);g_error_free(e);}g_byte_array_unref(b);g_io_stream_close(G_IO_STREAM(c),NULL,NULL);g_object_unref(c);return NULL;}
-static gboolean incoming(GSocketService*s,GSocketConnection*c,GObject*source,gpointer d){(void)s;(void)source;(void)d;GThread*t=g_thread_new("homed-varlink",serve,g_object_ref(c));g_thread_unref(t);return TRUE;}
-GSocketService *rcl_varlink_start(GError**error){struct stat st;GSocketService*s;GSocketAddress*a,*local=NULL;if(g_mkdir_with_parents(SOCKDIR,0755)<0){g_set_error(error,G_IO_ERROR,g_io_error_from_errno(errno),"cannot create %s: %s",SOCKDIR,g_strerror(errno));return NULL;}if(lstat(SOCKPATH,&st)==0){if(!S_ISSOCK(st.st_mode)){g_set_error(error,G_IO_ERROR,G_IO_ERROR_EXISTS,"%s exists and is not a socket",SOCKPATH);return NULL;}GSocket*probe=g_socket_new(G_SOCKET_FAMILY_UNIX,G_SOCKET_TYPE_STREAM,G_SOCKET_PROTOCOL_DEFAULT,NULL);a=g_unix_socket_address_new(SOCKPATH);gboolean active=g_socket_connect(probe,a,NULL,NULL);g_object_unref(a);g_object_unref(probe);if(active){g_set_error(error,G_IO_ERROR,G_IO_ERROR_ADDRESS_IN_USE,"another service is listening on %s",SOCKPATH);return NULL;}if(g_unlink(SOCKPATH)<0){g_set_error(error,G_IO_ERROR,g_io_error_from_errno(errno),"cannot remove stale socket: %s",g_strerror(errno));return NULL;}}else if(errno!=ENOENT){g_set_error(error,G_IO_ERROR,g_io_error_from_errno(errno),"cannot inspect socket: %s",g_strerror(errno));return NULL;}s=g_socket_service_new();a=g_unix_socket_address_new(SOCKPATH);if(!g_socket_listener_add_address(G_SOCKET_LISTENER(s),a,G_SOCKET_TYPE_STREAM,G_SOCKET_PROTOCOL_DEFAULT,NULL,&local,error)){g_object_unref(a);g_object_unref(s);return NULL;}g_object_unref(a);g_clear_object(&local);if(g_chmod(SOCKPATH,0666)<0){g_set_error(error,G_IO_ERROR,g_io_error_from_errno(errno),"cannot chmod socket: %s",g_strerror(errno));g_socket_listener_close(G_SOCKET_LISTENER(s));g_object_unref(s);g_unlink(SOCKPATH);return NULL;}g_signal_connect(s,"incoming",G_CALLBACK(incoming),NULL);g_socket_service_start(s);return s;}
-void rcl_varlink_stop(GSocketService*s){if(s){g_socket_service_stop(s);g_socket_listener_close(G_SOCKET_LISTENER(s));g_object_unref(s);}g_unlink(SOCKPATH);}
+#include <sys/stat.h>
+
+#define VARLINK_DIRECTORY "/run/systemd/userdb"
+#define VARLINK_SOCKET VARLINK_DIRECTORY "/io.systemd.Home"
+#define VARLINK_SERVICE "io.systemd.Home"
+#define USER_DATABASE "io.systemd.UserDatabase"
+#define MAX_REQUEST_SIZE (1024U * 1024U)
+
+static GMutex nss_mutex;
+
+typedef struct {
+    gchar *user_name;
+    gchar *group_name;
+} Membership;
+
+static void
+membership_free(gpointer data)
+{
+    Membership *membership = data;
+
+    g_free(membership->user_name);
+    g_free(membership->group_name);
+    g_free(membership);
+}
+
+static JsonObject *
+json_object_new_empty(void)
+{
+    return json_object_new();
+}
+
+static void
+json_object_set_string(JsonObject *object, const gchar *name,
+                       const gchar *value)
+{
+    json_object_set_string_member(object, name, value != NULL ? value : "");
+}
+
+static void
+json_object_set_number(JsonObject *object, const gchar *name, guint64 value)
+{
+    json_object_set_int_member(object, name, (gint64) value);
+}
+
+static gchar *
+json_object_serialize(JsonObject *object)
+{
+    JsonNode *root = json_node_new(JSON_NODE_OBJECT);
+    JsonGenerator *generator = json_generator_new();
+    gchar *data;
+
+    json_node_take_object(root, object);
+    json_generator_set_root(generator, root);
+    data = json_generator_to_data(generator, NULL);
+
+    g_object_unref(generator);
+    json_node_free(root);
+
+    return data;
+}
+
+static gboolean
+send_json(GOutputStream *output, JsonObject *object, GError **error)
+{
+    gchar *data;
+    gsize length;
+    const guint8 terminator = 0;
+    gboolean success;
+
+    data = json_object_serialize(object);
+    length = strlen(data);
+
+    success = g_output_stream_write_all(output, data, length, NULL, NULL,
+                                        error);
+    if (success)
+        success = g_output_stream_write_all(output, &terminator, 1, NULL,
+                                            NULL, error);
+
+    g_free(data);
+    return success;
+}
+
+static gboolean
+send_reply(GOutputStream *output, JsonObject *parameters,
+           gboolean continues, GError **error)
+{
+    JsonObject *response = json_object_new_empty();
+
+    json_object_set_object_member(response, "parameters", parameters);
+    json_object_set_boolean_member(response, "continues", continues);
+
+    return send_json(output, response, error);
+}
+
+static gboolean
+send_error(GOutputStream *output, const gchar *name, GError **error)
+{
+    JsonObject *response = json_object_new_empty();
+
+    json_object_set_string_member(response, "error", name);
+    json_object_set_object_member(response, "parameters",
+                                  json_object_new_empty());
+
+    return send_json(output, response, error);
+}
+
+static const gchar *
+get_string(JsonObject *object, const gchar *name)
+{
+    JsonNode *node;
+
+    if (!json_object_has_member(object, name))
+        return NULL;
+
+    node = json_object_get_member(object, name);
+    if (node == NULL || !JSON_NODE_HOLDS_VALUE(node) ||
+        json_node_get_value_type(node) != G_TYPE_STRING)
+        return NULL;
+
+    return json_node_get_string(node);
+}
+
+static gboolean
+get_number(JsonObject *object, const gchar *name, guint64 *value)
+{
+    JsonNode *node;
+    GType type;
+    gint64 number;
+
+    if (!json_object_has_member(object, name))
+        return FALSE;
+
+    node = json_object_get_member(object, name);
+    if (node == NULL || !JSON_NODE_HOLDS_VALUE(node))
+        return FALSE;
+
+    type = json_node_get_value_type(node);
+    if (type != G_TYPE_INT && type != G_TYPE_INT64 &&
+        type != G_TYPE_UINT && type != G_TYPE_UINT64 &&
+        type != G_TYPE_LONG && type != G_TYPE_ULONG)
+        return FALSE;
+
+    number = json_node_get_int(node);
+    if (number < 0)
+        return FALSE;
+
+    *value = (guint64) number;
+    return TRUE;
+}
+
+static JsonObject *
+make_user_record(const struct passwd *user)
+{
+    JsonObject *record = json_object_new_empty();
+
+    json_object_set_string(record, "userName", user->pw_name);
+    json_object_set_number(record, "uid", (guint64) user->pw_uid);
+    json_object_set_number(record, "gid", (guint64) user->pw_gid);
+    json_object_set_string(record, "realName", user->pw_gecos);
+    json_object_set_string(record, "homeDirectory", user->pw_dir);
+    json_object_set_string(record, "shell",
+        user->pw_shell != NULL && user->pw_shell[0] != '\0'
+            ? user->pw_shell : "/bin/sh");
+    json_object_set_string(record, "service", VARLINK_SERVICE);
+    json_object_set_string(record, "disposition", "regular");
+
+    return record;
+}
+
+static JsonObject *
+make_group_record(const struct group *group)
+{
+    JsonObject *record = json_object_new_empty();
+    JsonArray *members = json_array_new();
+
+    json_object_set_string(record, "groupName", group->gr_name);
+    json_object_set_number(record, "gid", (guint64) group->gr_gid);
+    json_object_set_string(record, "service", VARLINK_SERVICE);
+    json_object_set_string(record, "disposition", "regular");
+
+    for (gchar **member = group->gr_mem; member != NULL && *member != NULL;
+         member++)
+        json_array_add_string_element(members, *member);
+
+    json_object_set_array_member(record, "members", members);
+    return record;
+}
+
+static gboolean
+send_user_record(GOutputStream *output, const struct passwd *user,
+                 GError **error)
+{
+    JsonObject *parameters = json_object_new_empty();
+
+    json_object_set_object_member(parameters, "record",
+                                  make_user_record(user));
+    json_object_set_boolean_member(parameters, "incomplete", TRUE);
+
+    return send_reply(output, parameters, FALSE, error);
+}
+
+static gboolean
+send_group_record(GOutputStream *output, const struct group *group,
+                  GError **error)
+{
+    JsonObject *parameters = json_object_new_empty();
+
+    json_object_set_object_member(parameters, "record",
+                                  make_group_record(group));
+    json_object_set_boolean_member(parameters, "incomplete", TRUE);
+
+    return send_reply(output, parameters, FALSE, error);
+}
+
+static gboolean
+user_lookup(JsonObject *parameters, GOutputStream *output, GError **error)
+{
+    const gchar *name = get_string(parameters, "userName");
+    guint64 uid = 0;
+    gboolean has_uid = get_number(parameters, "uid", &uid);
+    struct passwd *by_name = NULL;
+    struct passwd *by_uid = NULL;
+    struct passwd *user = NULL;
+
+    if (name == NULL && !has_uid)
+        return send_error(output, USER_DATABASE ".EnumerationNotSupported",
+                          error);
+
+    if (name != NULL)
+        by_name = getpwnam(name);
+    if (has_uid && uid <= (guint64) ((uid_t) -1))
+        by_uid = getpwuid((uid_t) uid);
+
+    if (name != NULL && has_uid) {
+        if (by_name != NULL && by_uid != NULL &&
+            by_name->pw_uid == by_uid->pw_uid)
+            user = by_name;
+        else if (by_name != NULL || by_uid != NULL)
+            return send_error(output,
+                              USER_DATABASE ".ConflictingRecordFound",
+                              error);
+    } else {
+        user = name != NULL ? by_name : by_uid;
+    }
+
+    if (user == NULL)
+        return send_error(output, USER_DATABASE ".NoRecordFound", error);
+
+    return send_user_record(output, user, error);
+}
+
+static gboolean
+group_lookup(JsonObject *parameters, GOutputStream *output, GError **error)
+{
+    const gchar *name = get_string(parameters, "groupName");
+    guint64 gid = 0;
+    gboolean has_gid = get_number(parameters, "gid", &gid);
+    struct group *by_name = NULL;
+    struct group *by_gid = NULL;
+    struct group *group = NULL;
+
+    if (name == NULL && !has_gid)
+        return send_error(output, USER_DATABASE ".EnumerationNotSupported",
+                          error);
+
+    if (name != NULL)
+        by_name = getgrnam(name);
+    if (has_gid && gid <= (guint64) ((gid_t) -1))
+        by_gid = getgrgid((gid_t) gid);
+
+    if (name != NULL && has_gid) {
+        if (by_name != NULL && by_gid != NULL &&
+            by_name->gr_gid == by_gid->gr_gid)
+            group = by_name;
+        else if (by_name != NULL || by_gid != NULL)
+            return send_error(output,
+                              USER_DATABASE ".ConflictingRecordFound",
+                              error);
+    } else {
+        group = name != NULL ? by_name : by_gid;
+    }
+
+    if (group == NULL)
+        return send_error(output, USER_DATABASE ".NoRecordFound", error);
+
+    return send_group_record(output, group, error);
+}
+
+static gboolean
+user_is_member(const struct passwd *user, const struct group *group)
+{
+    if (user->pw_gid == group->gr_gid)
+        return TRUE;
+
+    for (gchar **member = group->gr_mem; member != NULL && *member != NULL;
+         member++) {
+        if (g_str_equal(*member, user->pw_name))
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
+static void
+add_membership(GPtrArray *memberships, const gchar *user_name,
+               const gchar *group_name)
+{
+    Membership *membership = g_new0(Membership, 1);
+
+    membership->user_name = g_strdup(user_name);
+    membership->group_name = g_strdup(group_name);
+    g_ptr_array_add(memberships, membership);
+}
+
+static gboolean
+send_memberships(GPtrArray *memberships, GOutputStream *output,
+                 gboolean allow_multiple, GError **error)
+{
+    guint count = memberships->len;
+
+    if (count == 0)
+        return send_error(output, USER_DATABASE ".NoRecordFound", error);
+
+    for (guint i = 0; i < count; i++) {
+        Membership *membership = g_ptr_array_index(memberships, i);
+        JsonObject *parameters = json_object_new_empty();
+        gboolean continues = allow_multiple && i + 1 < count;
+
+        json_object_set_string_member(parameters, "userName",
+                                      membership->user_name);
+        json_object_set_string_member(parameters, "groupName",
+                                      membership->group_name);
+
+        if (!send_reply(output, parameters, continues, error))
+            return FALSE;
+
+        if (!allow_multiple)
+            break;
+    }
+
+    return TRUE;
+}
+
+static gboolean
+get_memberships(JsonObject *parameters, GOutputStream *output,
+                gboolean allow_multiple, GError **error)
+{
+    const gchar *user_name = get_string(parameters, "userName");
+    const gchar *group_name = get_string(parameters, "groupName");
+    GPtrArray *memberships = g_ptr_array_new_with_free_func(membership_free);
+    struct passwd *user = NULL;
+    struct group *group = NULL;
+    gboolean success;
+
+    if (user_name == NULL && group_name == NULL) {
+        g_ptr_array_unref(memberships);
+        return send_error(output, USER_DATABASE ".EnumerationNotSupported",
+                          error);
+    }
+
+    if (user_name != NULL)
+        user = getpwnam(user_name);
+    if (group_name != NULL)
+        group = getgrnam(group_name);
+
+    if ((user_name != NULL && user == NULL) ||
+        (group_name != NULL && group == NULL)) {
+        g_ptr_array_unref(memberships);
+        return send_error(output, USER_DATABASE ".NoRecordFound", error);
+    }
+
+    if (user != NULL && group != NULL) {
+        if (user_is_member(user, group))
+            add_membership(memberships, user->pw_name, group->gr_name);
+    } else if (user != NULL) {
+        int count = 16;
+        gid_t *groups = g_new(gid_t, count);
+
+        if (getgrouplist(user->pw_name, user->pw_gid, groups, &count) < 0 &&
+            count > 0) {
+            groups = g_renew(gid_t, groups, count);
+            if (getgrouplist(user->pw_name, user->pw_gid, groups, &count) < 0)
+                count = 0;
+        }
+
+        for (int i = 0; i < count; i++) {
+            struct group *entry = getgrgid(groups[i]);
+
+            if (entry != NULL)
+                add_membership(memberships, user->pw_name, entry->gr_name);
+        }
+
+        g_free(groups);
+    } else {
+        setpwent();
+        while ((user = getpwent()) != NULL) {
+            if (user_is_member(user, group))
+                add_membership(memberships, user->pw_name, group->gr_name);
+        }
+        endpwent();
+    }
+
+    success = send_memberships(memberships, output, allow_multiple, error);
+    g_ptr_array_unref(memberships);
+    return success;
+}
+
+static gboolean
+dispatch_request(GOutputStream *output, const gchar *data, GError **error)
+{
+    JsonParser *parser = json_parser_new();
+    JsonNode *root;
+    JsonObject *request;
+    JsonObject *parameters;
+    const gchar *method;
+    const gchar *service;
+    gboolean allow_multiple = FALSE;
+    gboolean success = FALSE;
+
+    if (!json_parser_load_from_data(parser, data, -1, error)) {
+        g_clear_error(error);
+        success = send_error(output, "org.varlink.service.InvalidParameter",
+                             error);
+        goto out;
+    }
+
+    root = json_parser_get_root(parser);
+    if (root == NULL || !JSON_NODE_HOLDS_OBJECT(root)) {
+        success = send_error(output, "org.varlink.service.InvalidParameter",
+                             error);
+        goto out;
+    }
+
+    request = json_node_get_object(root);
+    method = get_string(request, "method");
+    if (!json_object_has_member(request, "parameters") ||
+        !JSON_NODE_HOLDS_OBJECT(json_object_get_member(request, "parameters")) ||
+        method == NULL) {
+        success = send_error(output, "org.varlink.service.InvalidParameter",
+                             error);
+        goto out;
+    }
+
+    parameters = json_object_get_object_member(request, "parameters");
+    if (json_object_has_member(request, "more")) {
+        JsonNode *more = json_object_get_member(request, "more");
+
+        if (more != NULL && JSON_NODE_HOLDS_VALUE(more) &&
+            json_node_get_value_type(more) == G_TYPE_BOOLEAN)
+            allow_multiple = json_node_get_boolean(more);
+    }
+
+    service = get_string(parameters, "service");
+    if (g_str_equal(method, USER_DATABASE ".GetUserRecord") ||
+        g_str_equal(method, USER_DATABASE ".GetGroupRecord") ||
+        g_str_equal(method, USER_DATABASE ".GetMemberships")) {
+        if (service == NULL || !g_str_equal(service, VARLINK_SERVICE)) {
+            success = send_error(output, USER_DATABASE ".BadService", error);
+        } else {
+            g_mutex_lock(&nss_mutex);
+
+            if (g_str_equal(method, USER_DATABASE ".GetUserRecord"))
+                success = user_lookup(parameters, output, error);
+            else if (g_str_equal(method, USER_DATABASE ".GetGroupRecord"))
+                success = group_lookup(parameters, output, error);
+            else
+                success = get_memberships(parameters, output, allow_multiple,
+                                          error);
+
+            g_mutex_unlock(&nss_mutex);
+        }
+    } else {
+        success = send_error(output, "org.varlink.service.MethodNotFound",
+                             error);
+    }
+
+out:
+    g_object_unref(parser);
+    return success;
+}
+
+static gpointer
+serve_connection(gpointer data)
+{
+    GSocketConnection *connection = data;
+    GInputStream *input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
+    GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
+    GByteArray *request = g_byte_array_new();
+    guint8 byte;
+    GError *error = NULL;
+
+    while (request->len < MAX_REQUEST_SIZE) {
+        gssize bytes_read = g_input_stream_read(input, &byte, 1, NULL, &error);
+
+        if (bytes_read <= 0 || byte == '\0')
+            break;
+
+        g_byte_array_append(request, &byte, 1);
+    }
+
+    if (error == NULL && request->len > 0 &&
+        request->len < MAX_REQUEST_SIZE) {
+        const guint8 terminator = 0;
+
+        g_byte_array_append(request, &terminator, 1);
+        dispatch_request(output, (const gchar *) request->data, &error);
+    } else if (error == NULL && request->len >= MAX_REQUEST_SIZE) {
+        g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_MESSAGE_TOO_LARGE,
+                            "Varlink request exceeds the size limit");
+    }
+
+    if (error != NULL) {
+        g_warning("Varlink request failed: %s", error->message);
+        g_error_free(error);
+    }
+
+    g_byte_array_unref(request);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+
+    return NULL;
+}
+
+static gboolean
+incoming_connection(GSocketService *service, GSocketConnection *connection,
+                    GObject *source_object, gpointer user_data)
+{
+    GThread *thread;
+
+    (void) service;
+    (void) source_object;
+    (void) user_data;
+
+    thread = g_thread_new("homed-varlink", serve_connection,
+                          g_object_ref(connection));
+    g_thread_unref(thread);
+
+    return TRUE;
+}
+
+GSocketService *
+rcl_varlink_start(GError **error)
+{
+    struct stat status;
+    GSocketService *service;
+    GSocketAddress *address;
+    GSocketAddress *effective_address = NULL;
+
+    if (g_mkdir_with_parents(VARLINK_DIRECTORY, 0755) < 0) {
+        g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
+                    "cannot create %s: %s", VARLINK_DIRECTORY,
+                    g_strerror(errno));
+        return NULL;
+    }
+
+    if (lstat(VARLINK_SOCKET, &status) == 0) {
+        GSocket *probe;
+        gboolean connected;
+
+        if (!S_ISSOCK(status.st_mode)) {
+            g_set_error(error, G_IO_ERROR, G_IO_ERROR_EXISTS,
+                        "%s exists and is not a socket", VARLINK_SOCKET);
+            return NULL;
+        }
+
+        probe = g_socket_new(G_SOCKET_FAMILY_UNIX, G_SOCKET_TYPE_STREAM,
+                             G_SOCKET_PROTOCOL_DEFAULT, error);
+        if (probe == NULL)
+            return NULL;
+
+        address = g_unix_socket_address_new(VARLINK_SOCKET);
+        connected = g_socket_connect(probe, address, NULL, NULL);
+        g_object_unref(address);
+        g_object_unref(probe);
+
+        if (connected) {
+            g_set_error(error, G_IO_ERROR, G_IO_ERROR_ADDRESS_IN_USE,
+                        "another service is listening on %s", VARLINK_SOCKET);
+            return NULL;
+        }
+
+        if (g_unlink(VARLINK_SOCKET) < 0) {
+            g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
+                        "cannot remove stale socket %s: %s", VARLINK_SOCKET,
+                        g_strerror(errno));
+            return NULL;
+        }
+    } else if (errno != ENOENT) {
+        g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
+                    "cannot inspect %s: %s", VARLINK_SOCKET,
+                    g_strerror(errno));
+        return NULL;
+    }
+
+    service = g_socket_service_new();
+    address = g_unix_socket_address_new(VARLINK_SOCKET);
+
+    if (!g_socket_listener_add_address(G_SOCKET_LISTENER(service), address,
+            G_SOCKET_TYPE_STREAM, G_SOCKET_PROTOCOL_DEFAULT, NULL,
+            &effective_address, error)) {
+        g_object_unref(address);
+        g_object_unref(service);
+        return NULL;
+    }
+
+    g_object_unref(address);
+    g_clear_object(&effective_address);
+
+    if (g_chmod(VARLINK_SOCKET, 0666) < 0) {
+        g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
+                    "cannot set permissions on %s: %s", VARLINK_SOCKET,
+                    g_strerror(errno));
+        g_socket_listener_close(G_SOCKET_LISTENER(service));
+        g_object_unref(service);
+        g_unlink(VARLINK_SOCKET);
+        return NULL;
+    }
+
+    g_signal_connect(service, "incoming", G_CALLBACK(incoming_connection),
+                     NULL);
+    g_socket_service_start(service);
+
+    return service;
+}
+
+void
+rcl_varlink_stop(GSocketService *service)
+{
+    if (service != NULL) {
+        g_socket_service_stop(service);
+        g_socket_listener_close(G_SOCKET_LISTENER(service));
+        g_object_unref(service);
+    }
+
+    g_unlink(VARLINK_SOCKET);
+}

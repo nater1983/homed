@@ -1,23 +1,42 @@
 .TH HOMED 8 "October 2026" "homed 0.2.0" "System Administration"
 .SH NAME
-homed \- NSS-backed org.freedesktop.home1 D-Bus compatibility service
+homed \- NSS-backed org.freedesktop.home1 D-Bus and Varlink compatibility service
 .SH SYNOPSIS
 .B homed
 .SH DESCRIPTION
 .B homed
 provides a limited, non-systemd implementation of the
 .BR org.freedesktop.home1
-D-Bus API for accounts visible through the system's Name Service Switch (NSS).
-It owns the system-bus name
+D-Bus API and the
+.BR io.systemd.UserDatabase
+Varlink interface for accounts visible through the system's Name Service Switch (NSS).
+The D-Bus service owns the system-bus name
 .BR org.freedesktop.home1
 and exports the manager object at
 .BR /org/freedesktop/home1 .
+The Varlink service listens on
+.I /run/systemd/userdb/io.systemd.Home
+so compatible user-database clients can discover it.
 The daemon is intended as a compatibility layer for systems such as Slackware
 that do not use systemd.
 .PP
 This release is not a full replacement for systemd-homed. It reads account
 information from NSS/passwd and does not create or manage home storage, perform
 encryption, or activate login sessions. The daemon currently requires root.
+.SH VARLINK METHODS
+The Varlink interface implements
+.BR GetUserRecord ,
+.BR GetGroupRecord ,
+and
+.BR GetMemberships .
+The first two return NSS-derived user or group records and set
+.B incomplete
+to true because NSS does not supply managed-home metadata. Membership queries
+return the user/group pairs known through NSS. Unsupported enumeration requests
+return
+.BR io.systemd.UserDatabase.EnumerationNotSupported .
+The Varlink socket is created with mode 0666 for user-database discovery
+clients; access to it does not enable home-management operations.
 .SH MANAGER METHODS
 The manager object currently implements these methods:
 .TP
@@ -54,16 +73,14 @@ The user-record dictionary currently includes
 .BR service ,
 and
 .BR disposition .
-The service is reported as
-.BR nss
-and the disposition as
-.BR regular .
-These records return
-.B true
-for the
+The D-Bus interface reports service
+.BR nss ;
+the Varlink interface identifies its provider as
+.BR io.systemd.Home .
+These records return true for the
 .I incomplete
-output because NSS does not provide the managed-home metadata, secrets,
-bindings, or signatures required for a complete systemd-homed user record.
+output because NSS does not provide managed-home metadata, secrets, bindings,
+or signatures required for a complete systemd-homed user record.
 .TP
 .B AutoLogin
 The manager exposes this read-only property as an empty array.
@@ -75,46 +92,14 @@ where
 is the account's numeric UID.
 The
 .B org.freedesktop.home1.Home
-interface exposes the read-only properties
-.BR UserName ,
-.BR UID ,
-.BR GID ,
-.BR RealName ,
-.BR HomeDirectory ,
-.BR Shell ,
-.BR State ,
-and
-.BR Service .
-The current state is reported as
-.B inactive
-and the service as
-.BR nss .
-.PP
-The interface declares
-.BR Activate ,
-.BR Deactivate ,
-.BR Lock ,
-.BR Unlock ,
-and
-.BR Resize
-methods. These methods currently return
+interface exposes read-only account properties. Its lifecycle methods currently
+return
 .B org.freedesktop.home1.NotSupported
 because managed storage and lifecycle operations have not been implemented.
-The
-.B Changed
-and
-.B Removed
-signals are declared for compatibility, but are not emitted by the current
-implementation.
 .SH D-BUS REGISTRATION AND LOGGING
-At startup the daemon logs a startup message and logs successful registration
-of the manager object at
-.BR /org/freedesktop/home1 .
-If it loses or cannot acquire its D-Bus name, it logs the event and schedules
-a retry after 2500 milliseconds. Registration is attempted again when the
-retry runs.
-.PP
-Messages are sent through syslog under the
+At startup the daemon logs successful registration of the manager object.
+If it loses or cannot acquire its D-Bus name, it schedules a retry after 2500
+milliseconds. Messages are sent through syslog under the
 .B homed
 identifier and are handled by the system's configured logging service.
 .SH EXAMPLES
@@ -124,35 +109,18 @@ Inspect the manager interface:
 busctl --system introspect org.freedesktop.home1 /org/freedesktop/home1
 .fi
 .PP
-Look up an account by name:
+Look up an account through Varlink:
 .PP
 .nf
-busctl --system call org.freedesktop.home1 /org/freedesktop/home1 org.freedesktop.home1.Manager GetHomeByName s root
-.fi
-.PP
-Get the NSS-derived user record:
-.PP
-.nf
-busctl --system call org.freedesktop.home1 /org/freedesktop/home1 org.freedesktop.home1.Manager GetUserRecordByName s root
-.fi
-.PP
-Inspect a per-home object (replace
-.I 0
-with an existing UID):
-.PP
-.nf
-busctl --system introspect org.freedesktop.home1 /org/freedesktop/home1/home/_0
+varlink call unix:/run/systemd/userdb/io.systemd.Home io.systemd.UserDatabase.GetUserRecord '{"userName":"root","service":"io.systemd.Home"}'
 .fi
 .SH LIMITATIONS
 .B homed
-does not currently implement home creation or registration, storage backends,
-encrypted home images, activation/deactivation, locking/unlocking, resizing,
-home removal, full record parsing or validation, or Polkit-enforced
-authorization for management operations. Do not rely on it to provide
-systemd-homed storage or login-activation semantics.
-.PP
-The per-home object list is populated from NSS-visible accounts; it is not a
-persistent registry of managed home areas.
+does not implement home creation or registration, storage backends, encrypted
+home images, activation/deactivation, locking/unlocking, resizing, home removal,
+full record parsing or validation, or Polkit-enforced authorization for
+management operations. Do not rely on it to provide systemd-homed storage or
+login-activation semantics.
 .SH FILES
 .TP
 .I /usr/libexec/homed
@@ -160,11 +128,15 @@ Typical installed daemon path; the actual path depends on the Meson
 .B libexecdir
 setting.
 .TP
+.I /run/systemd/userdb/io.systemd.Home
+Varlink socket used for user-database discovery.
+.TP
 .I /usr/share/dbus-1/interfaces/org.freedesktop.home1.xml
 Installed D-Bus interface description; the actual path depends on the Meson
 .B datadir
 setting.
 .SH SEE ALSO
 .BR busctl (1),
+.BR varlink (1),
 .BR dbus-daemon (1),
 .BR nsswitch.conf (5)
