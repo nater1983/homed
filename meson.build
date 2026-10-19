@@ -1,23 +1,12 @@
-project(
-  'homed', 'c',
-  version: '0.2.0',
-  license: 'GPL-2.0-or-later',
-  meson_version: '>= 0.58.0',
-  default_options: ['c_std=gnu11', 'warning_level=2', 'werror=false'],
-)
-
+project('homed', 'c', version: '0.2.0', license: 'GPL-2.0-or-later', meson_version: '>= 0.58.0', default_options: ['c_std=gnu11', 'warning_level=2', 'werror=false'])
 cc = meson.get_compiler('c')
-add_project_arguments(cc.get_supported_arguments([
-  '-Wno-unused-parameter', '-Wno-missing-field-initializers',
-  '-fstack-protector-strong', '-D_FORTIFY_SOURCE=2',
-]), language: 'c')
-
+add_project_arguments(cc.get_supported_arguments(['-Wno-unused-parameter', '-Wno-missing-field-initializers', '-fstack-protector-strong', '-D_FORTIFY_SOURCE=2']), language: 'c')
 glib_req = '>= 2.56'
 glib_dep = dependency('glib-2.0', version: glib_req)
 gio_dep = dependency('gio-2.0', version: glib_req)
 gio_unix = dependency('gio-unix-2.0', version: glib_req)
+json_glib = dependency('json-glib-1.0', version: '>= 1.4')
 polkit = dependency('polkit-gobject-1', version: '>= 0.113')
-
 prefix = get_option('prefix')
 datadir = get_option('datadir')
 libexecdir = get_option('libexecdir')
