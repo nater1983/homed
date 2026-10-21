@@ -1,5 +1,9 @@
 # ChangeLog
 
+## 0.3.1
+
+- Split startup and Varlink listener registration into separate syslog messages.
+
 ## 0.3.0
 
 - Added a Varlink listener at `/run/systemd/userdb/io.systemd.Home` for the `io.systemd.UserDatabase` interface.
