@@ -49,11 +49,11 @@ teardown(Fixture *unused, gconstpointer data)
 {
     (void) unused; (void) data;
     rcl_varlink_stop(fixture.service);
+    fixture.service = NULL;
     g_main_loop_quit(fixture.loop);
     g_thread_join(fixture.loop_thread);
     g_main_loop_unref(fixture.loop);
     g_rmdir(fixture.directory);
-    g_clear_object(&fixture.service);
     g_clear_pointer(&fixture.socket_path, g_free);
     g_clear_pointer(&fixture.directory, g_free);
 }
