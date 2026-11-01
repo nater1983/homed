@@ -1,4 +1,5 @@
 #include "rcl-home.h"
+#include "rcl-nss.h"
 #include <pwd.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -107,7 +108,7 @@ static struct passwd *passwd_for_pid(pid_t pid) {
     return pw;
 }
 
-static void method_call(GDBusConnection *conn, const gchar *sender, const gchar *obj,
+static void method_call_unlocked(GDBusConnection *conn, const gchar *sender, const gchar *obj,
  const gchar *iface, const gchar *method, GVariant *params, GDBusMethodInvocation *inv, gpointer data) {
     RclHome *self = data; struct passwd *pw = NULL;
     (void)conn; (void)sender; (void)obj; (void)iface;
@@ -181,6 +182,14 @@ static GVariant *home_get_property(GDBusConnection *c,const gchar *s,const gchar
     if (g_str_equal(p,"Service")) return g_variant_new_string("nss");
     return NULL;
 }
+static void method_call(GDBusConnection *conn, const gchar *sender,
+ const gchar *obj, const gchar *iface, const gchar *method, GVariant *params,
+ GDBusMethodInvocation *inv, gpointer data) {
+    rcl_nss_lock();
+    method_call_unlocked(conn, sender, obj, iface, method, params, inv, data);
+    rcl_nss_unlock();
+}
+
 static const GDBusInterfaceVTable manager_vtable={.method_call=method_call,.get_property=get_property};
 
 RclHome *rcl_home_new(void) {
@@ -225,11 +234,12 @@ gboolean rcl_home_register(RclHome *self,GDBusConnection *connection,GError **er
     self->connection=g_object_ref(connection);
     self->registration_id=g_dbus_connection_register_object(connection,OBJECT_PATH,self->node->interfaces[0],&manager_vtable,self,NULL,error);
     if (!self->registration_id) { g_clear_object(&self->connection); return FALSE; }
+    rcl_nss_lock();
     setpwent();
     while ((pw=getpwent())!=NULL) if (!register_home_entry(self,pw,error)) {
-        endpwent(); g_dbus_connection_unregister_object(connection,self->registration_id); self->registration_id=0;
+        endpwent(); rcl_nss_unlock(); g_dbus_connection_unregister_object(connection,self->registration_id); self->registration_id=0;
         for (guint i=0;i<self->homes->len;i++) { HomeEntry *h=g_ptr_array_index(self->homes,i); if (h->registration_id) { g_dbus_connection_unregister_object(connection,h->registration_id); h->registration_id=0; } }
         g_hash_table_remove_all(self->homes_by_uid); g_ptr_array_set_size(self->homes,0); g_clear_object(&self->connection); return FALSE;
     }
-    endpwent(); return TRUE;
+    endpwent(); rcl_nss_unlock(); return TRUE;
 }
