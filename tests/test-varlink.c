@@ -208,6 +208,52 @@ test_multiple_requests(Fixture *unused, gconstpointer data)
     g_object_unref(connection);
 }
 
+
+static void
+test_user_record_by_uid(Fixture *unused, gconstpointer data)
+{
+    GSocketConnection *connection = connect_socket();
+    gchar *reply = exchange(connection,
+        "{\"method\":\"io.systemd.UserDatabase.GetUserRecord\","
+        "\"parameters\":{\"service\":\"io.systemd.Home\",\"uid\":0}}");
+    (void) unused; (void) data;
+    assert_reply_contains(reply, "\"userName\":\"root\"");
+    assert_reply_contains(reply, "\"uid\":0");
+    g_free(reply);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
+static void
+test_missing_user(Fixture *unused, gconstpointer data)
+{
+    GSocketConnection *connection = connect_socket();
+    gchar *reply = exchange(connection,
+        "{\"method\":\"io.systemd.UserDatabase.GetUserRecord\","
+        "\"parameters\":{\"service\":\"io.systemd.Home\","
+        "\"userName\":\"homed-test-user-that-does-not-exist\"}}");
+    (void) unused; (void) data;
+    assert_reply_contains(reply, "io.systemd.UserDatabase.NoRecordFound");
+    g_free(reply);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
+static void
+test_conflicting_user_identity(Fixture *unused, gconstpointer data)
+{
+    GSocketConnection *connection = connect_socket();
+    gchar *reply = exchange(connection,
+        "{\"method\":\"io.systemd.UserDatabase.GetUserRecord\","
+        "\"parameters\":{\"service\":\"io.systemd.Home\","
+        "\"userName\":\"root\",\"uid\":1}}");
+    (void) unused; (void) data;
+    assert_reply_contains(reply, "io.systemd.UserDatabase.ConflictingRecordFound");
+    g_free(reply);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
 static void
 test_invalid_json(Fixture *unused, gconstpointer data)
 {
@@ -271,6 +317,12 @@ main(int argc, char **argv)
                test_user_record, teardown);
     g_test_add("/varlink/group-record", Fixture, NULL, setup,
                test_group_record, teardown);
+    g_test_add("/varlink/user-record-by-uid", Fixture, NULL, setup,
+               test_user_record_by_uid, teardown);
+    g_test_add("/varlink/missing-user", Fixture, NULL, setup,
+               test_missing_user, teardown);
+    g_test_add("/varlink/conflicting-user-identity", Fixture, NULL, setup,
+               test_conflicting_user_identity, teardown);
     g_test_add("/varlink/memberships", Fixture, NULL, setup,
                test_memberships, teardown);
     g_test_add("/varlink/unknown-method", Fixture, NULL, setup,
