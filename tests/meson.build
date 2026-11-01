@@ -18,7 +18,6 @@ test('varlink-integration', test_varlink, timeout: 60)
 test_dbus = executable('test-dbus',
   'test-dbus.c',
   '../src/rcl-home.c',
-  '../src/rcl-nss.c',
   '../src/rcl-varlink.c',
   '../src/rcl-nss.c',
   dependencies: [glib_dep, gio_dep, gio_unix, json_glib],
