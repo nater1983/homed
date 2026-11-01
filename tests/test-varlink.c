@@ -14,9 +14,10 @@ typedef struct {
 static Fixture fixture;
 
 static void
-setup(void)
+setup(Fixture *unused, gconstpointer data)
 {
     GError *error = NULL;
+    (void) unused; (void) data;
 
     fixture.directory = g_dir_make_tmp("homed-varlink-test-XXXXXX", &error);
     g_assert_no_error(error);
@@ -31,8 +32,9 @@ setup(void)
 }
 
 static void
-teardown(void)
+teardown(Fixture *unused, gconstpointer data)
 {
+    (void) unused; (void) data;
     rcl_varlink_stop(fixture.service);
     g_rmdir(fixture.directory);
     g_clear_object(&fixture.service);
@@ -90,8 +92,9 @@ assert_reply_contains(const gchar *reply, const gchar *needle)
 }
 
 static void
-test_user_record(void)
+test_user_record(Fixture *unused, gconstpointer data)
 {
+    (void) unused; (void) data;
     GSocketConnection *connection = connect_socket();
     gchar *reply = exchange(connection,
         "{\"method\":\"io.systemd.UserDatabase.GetUserRecord\","
@@ -107,8 +110,9 @@ test_user_record(void)
 }
 
 static void
-test_group_record(void)
+test_group_record(Fixture *unused, gconstpointer data)
 {
+    (void) unused; (void) data;
     GSocketConnection *connection = connect_socket();
     gchar *reply = exchange(connection,
         "{\"method\":\"io.systemd.UserDatabase.GetGroupRecord\","
@@ -122,8 +126,9 @@ test_group_record(void)
 }
 
 static void
-test_memberships(void)
+test_memberships(Fixture *unused, gconstpointer data)
 {
+    (void) unused; (void) data;
     GSocketConnection *connection = connect_socket();
     gchar *reply = exchange(connection,
         "{\"method\":\"io.systemd.UserDatabase.GetMemberships\","
@@ -138,8 +143,9 @@ test_memberships(void)
 }
 
 static void
-test_unknown_method(void)
+test_unknown_method(Fixture *unused, gconstpointer data)
 {
+    (void) unused; (void) data;
     GSocketConnection *connection = connect_socket();
     gchar *reply = exchange(connection,
         "{\"method\":\"io.systemd.UserDatabase.NoSuchMethod\","
@@ -152,8 +158,9 @@ test_unknown_method(void)
 }
 
 static void
-test_bad_service(void)
+test_bad_service(Fixture *unused, gconstpointer data)
 {
+    (void) unused; (void) data;
     GSocketConnection *connection = connect_socket();
     gchar *reply = exchange(connection,
         "{\"method\":\"io.systemd.UserDatabase.GetUserRecord\","
@@ -166,8 +173,9 @@ test_bad_service(void)
 }
 
 static void
-test_multiple_requests(void)
+test_multiple_requests(Fixture *unused, gconstpointer data)
 {
+    (void) unused; (void) data;
     GSocketConnection *connection = connect_socket();
     gchar *user = exchange(connection,
         "{\"method\":\"io.systemd.UserDatabase.GetUserRecord\","
@@ -180,6 +188,19 @@ test_multiple_requests(void)
     assert_reply_contains(group, "\"groupName\":\"root\"");
     g_free(user);
     g_free(group);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
+static void
+test_invalid_json(Fixture *unused, gconstpointer data)
+{
+    GSocketConnection *connection = connect_socket();
+    gchar *reply = exchange(connection, "{");
+
+    (void) unused; (void) data;
+    assert_reply_contains(reply, "org.varlink.service.InvalidParameter");
+    g_free(reply);
     g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
     g_object_unref(connection);
 }
@@ -211,8 +232,9 @@ concurrent_worker(gpointer data)
 }
 
 static void
-test_concurrent_requests(void)
+test_concurrent_requests(Fixture *unused, gconstpointer data)
 {
+    (void) unused; (void) data;
     enum { THREADS = 8, ITERATIONS = 10 };
     Worker worker = { .iterations = ITERATIONS, .failures = 0 };
     GThread *threads[THREADS];
@@ -239,6 +261,8 @@ main(int argc, char **argv)
                test_unknown_method, teardown);
     g_test_add("/varlink/bad-service", Fixture, NULL, setup,
                test_bad_service, teardown);
+    g_test_add("/varlink/invalid-json", Fixture, NULL, setup,
+               test_invalid_json, teardown);
     g_test_add("/varlink/multiple-requests", Fixture, NULL, setup,
                test_multiple_requests, teardown);
     g_test_add("/varlink/concurrent-requests", Fixture, NULL, setup,
