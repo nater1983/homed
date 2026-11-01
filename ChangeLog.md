@@ -2,7 +2,7 @@
 
 ## 0.4.0
 
-- Added isolated D-Bus integration tests for user lookups by name, UID, and PID, home lookups, home properties, home enumeration, and missing-user errors.
+- Added isolated D-Bus integration tests for user lookups by name, UID, and PID, home lookups by name and UID, home properties, home enumeration, unsupported lifecycle operations, and missing-user errors.
 - Added isolated Varlink integration tests for user, group, and membership records, invalid JSON, unsupported methods, bad service names, persistent connections, and concurrent clients.
 - Added a mixed D-Bus/Varlink concurrency regression test exercising the shared NSS mutex from both interfaces.
 - Added a private-path Varlink listener entry point so tests never bind or remove the production userdb socket.
