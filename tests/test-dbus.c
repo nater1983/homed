@@ -19,9 +19,10 @@ typedef struct {
     GError *startup_error;
 } Fixture;
 
-static void
-service_thread(Fixture *fixture)
+static gpointer
+service_thread(gpointer data)
 {
+    Fixture *fixture = data;
     GError *error = NULL;
     GDBusConnection *connection;
     RclHome *home;
@@ -71,6 +72,7 @@ service_thread(Fixture *fixture)
     }
     g_main_context_pop_thread_default(fixture->context);
     g_main_context_unref(fixture->context);
+    return NULL;
 }
 
 static gboolean
@@ -93,7 +95,7 @@ setup(Fixture *fixture, gconstpointer data)
     fixture->bus = g_test_dbus_new(G_TEST_DBUS_NONE);
     g_test_dbus_up(fixture->bus);
     fixture->thread = g_thread_new("homed-dbus-test",
-                                   (GThreadFunc) service_thread, fixture);
+                                   service_thread, fixture);
 
     g_mutex_lock(&fixture->mutex);
     while (!fixture->ready)
