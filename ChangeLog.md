@@ -2,6 +2,9 @@
 
 ## 0.3.1
 
+- Serialize NSS lookups shared by D-Bus and Varlink worker threads with a common mutex.
+- Permit unprivileged D-Bus clients to call GetUserRecordByUID, GetUserRecordByName, and GetUserRecordByPID.
+- Use the configured package version in the startup log instead of a hardcoded version string.
 - Split startup and Varlink listener registration into separate syslog messages.
 
 ## 0.3.0
