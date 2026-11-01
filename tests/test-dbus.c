@@ -320,6 +320,24 @@ test_home_by_name(Fixture *fixture, gconstpointer data)
     g_variant_unref(reply);
 }
 
+
+static void
+test_home_by_uid(Fixture *fixture, gconstpointer data)
+{
+    GError *error = NULL;
+    GVariant *reply = call_manager(fixture, "GetHomeByUID",
+        g_variant_new("(u)", 0u), G_VARIANT_TYPE("(ssussso)"), &error);
+    GVariant *name_value;
+    (void) data;
+
+    g_assert_no_error(error);
+    g_assert_nonnull(reply);
+    name_value = g_variant_get_child_value(reply, 0);
+    g_assert_cmpstr(g_variant_get_string(name_value, NULL), ==, "root");
+    g_variant_unref(name_value);
+    g_variant_unref(reply);
+}
+
 static void
 test_home_property(Fixture *fixture, gconstpointer data)
 {
@@ -453,6 +471,8 @@ main(int argc, char **argv)
                test_list_homes, teardown);
     g_test_add("/dbus/home-by-name", Fixture, NULL, setup,
                test_home_by_name, teardown);
+    g_test_add("/dbus/home-by-uid", Fixture, NULL, setup,
+               test_home_by_uid, teardown);
     g_test_add("/dbus/home-property", Fixture, NULL, setup,
                test_home_property, teardown);
     g_test_add("/dbus/mixed-nss-concurrency", Fixture, NULL, setup,
