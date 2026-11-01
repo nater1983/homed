@@ -19,7 +19,9 @@ test_dbus = executable('test-dbus',
   'test-dbus.c',
   '../src/rcl-home.c',
   '../src/rcl-nss.c',
-  dependencies: [glib_dep, gio_dep],
+  '../src/rcl-varlink.c',
+  '../src/rcl-nss.c',
+  dependencies: [glib_dep, gio_dep, gio_unix, json_glib],
   include_directories: include_directories('../src'))
 
 test('dbus-integration', test_dbus, timeout: 60)
