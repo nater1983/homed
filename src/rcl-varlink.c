@@ -575,27 +575,28 @@ incoming_connection(GSocketService *service, GSocketConnection *connection,
 }
 
 GSocketService *
-rcl_varlink_start(GError **error)
+rcl_varlink_start_at(const gchar *directory, const gchar *socket_path,
+                    GError **error)
 {
     struct stat status;
     GSocketService *service;
     GSocketAddress *address;
     GSocketAddress *effective_address = NULL;
 
-    if (g_mkdir_with_parents(VARLINK_DIRECTORY, 0755) < 0) {
+    if (g_mkdir_with_parents(directory, 0755) < 0) {
         g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
-                    "cannot create %s: %s", VARLINK_DIRECTORY,
+                    "cannot create %s: %s", directory,
                     g_strerror(errno));
         return NULL;
     }
 
-    if (lstat(VARLINK_SOCKET, &status) == 0) {
+    if (lstat(socket_path, &status) == 0) {
         GSocket *probe;
         gboolean connected;
 
         if (!S_ISSOCK(status.st_mode)) {
             g_set_error(error, G_IO_ERROR, G_IO_ERROR_EXISTS,
-                        "%s exists and is not a socket", VARLINK_SOCKET);
+                        "%s exists and is not a socket", socket_path);
             return NULL;
         }
 
@@ -604,32 +605,32 @@ rcl_varlink_start(GError **error)
         if (probe == NULL)
             return NULL;
 
-        address = g_unix_socket_address_new(VARLINK_SOCKET);
+        address = g_unix_socket_address_new(socket_path);
         connected = g_socket_connect(probe, address, NULL, NULL);
         g_object_unref(address);
         g_object_unref(probe);
 
         if (connected) {
             g_set_error(error, G_IO_ERROR, G_IO_ERROR_ADDRESS_IN_USE,
-                        "another service is listening on %s", VARLINK_SOCKET);
+                        "another service is listening on %s", socket_path);
             return NULL;
         }
 
-        if (g_unlink(VARLINK_SOCKET) < 0) {
+        if (g_unlink(socket_path) < 0) {
             g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
-                        "cannot remove stale socket %s: %s", VARLINK_SOCKET,
+                        "cannot remove stale socket %s: %s", socket_path,
                         g_strerror(errno));
             return NULL;
         }
     } else if (errno != ENOENT) {
         g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
-                    "cannot inspect %s: %s", VARLINK_SOCKET,
+                    "cannot inspect %s: %s", socket_path,
                     g_strerror(errno));
         return NULL;
     }
 
     service = g_socket_service_new();
-    address = g_unix_socket_address_new(VARLINK_SOCKET);
+    address = g_unix_socket_address_new(socket_path);
 
     if (!g_socket_listener_add_address(G_SOCKET_LISTENER(service), address,
             G_SOCKET_TYPE_STREAM, G_SOCKET_PROTOCOL_DEFAULT, NULL,
@@ -642,31 +643,45 @@ rcl_varlink_start(GError **error)
     g_object_unref(address);
     g_clear_object(&effective_address);
 
-    if (g_chmod(VARLINK_SOCKET, 0666) < 0) {
+    if (g_chmod(socket_path, 0666) < 0) {
         g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
-                    "cannot set permissions on %s: %s", VARLINK_SOCKET,
+                    "cannot set permissions on %s: %s", socket_path,
                     g_strerror(errno));
         g_socket_listener_close(G_SOCKET_LISTENER(service));
         g_object_unref(service);
-        g_unlink(VARLINK_SOCKET);
+        g_unlink(socket_path);
         return NULL;
     }
 
     g_signal_connect(service, "incoming", G_CALLBACK(incoming_connection),
                      NULL);
     g_socket_service_start(service);
+    g_object_set_data_full(G_OBJECT(service), "homed-varlink-socket-path",
+                           g_strdup(socket_path), g_free);
 
     return service;
+}
+
+GSocketService *
+rcl_varlink_start(GError **error)
+{
+    return rcl_varlink_start_at(VARLINK_DIRECTORY, VARLINK_SOCKET, error);
 }
 
 void
 rcl_varlink_stop(GSocketService *service)
 {
+    const gchar *socket_path = service != NULL
+        ? g_object_get_data(G_OBJECT(service), "homed-varlink-socket-path")
+        : NULL;
+
     if (service != NULL) {
         g_socket_service_stop(service);
         g_socket_listener_close(G_SOCKET_LISTENER(service));
+        if (socket_path != NULL)
+            g_unlink(socket_path);
         g_object_unref(service);
+    } else {
+        g_unlink(VARLINK_SOCKET);
     }
-
-    g_unlink(VARLINK_SOCKET);
 }
