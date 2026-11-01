@@ -1,11 +1,14 @@
 # ChangeLog
 
+## 0.3.2
+
+- Backported shared NSS locking for D-Bus and Varlink lookups to prevent concurrent access to NSS state.
+- Added default D-Bus policy permissions for GetUserRecordByUID, GetUserRecordByName, and GetUserRecordByPID.
+- Use the configured package version in the startup log instead of a hardcoded version string.
+
 ## 0.3.1
 
-- Serialize NSS lookups shared by D-Bus and Varlink worker threads with a common mutex.
-- Permit unprivileged D-Bus clients to call GetUserRecordByUID, GetUserRecordByName, and GetUserRecordByPID.
-- Use the configured package version in the startup log instead of a hardcoded version string.
-- Split startup and Varlink listener registration into separate syslog messages.
+- No changes from 0.3.0.
 
 ## 0.3.0
 
