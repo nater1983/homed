@@ -1,4 +1,5 @@
 #include "rcl-varlink.h"
+#include "rcl-nss.h"
 
 #include <gio/gunixsocketaddress.h>
 #include <glib/gstdio.h>
@@ -16,7 +17,6 @@
 #define USER_DATABASE "io.systemd.UserDatabase"
 #define MAX_REQUEST_SIZE (1024U * 1024U)
 
-static GMutex nss_mutex;
 
 typedef struct {
     gchar *user_name;
@@ -483,7 +483,7 @@ dispatch_request(GOutputStream *output, const gchar *data, GError **error)
         if (service == NULL || !g_str_equal(service, VARLINK_SERVICE)) {
             success = send_error(output, USER_DATABASE ".BadService", error);
         } else {
-            g_mutex_lock(&nss_mutex);
+            rcl_nss_lock();
 
             if (g_str_equal(method, USER_DATABASE ".GetUserRecord"))
                 success = user_lookup(parameters, output, error);
@@ -493,7 +493,7 @@ dispatch_request(GOutputStream *output, const gchar *data, GError **error)
                 success = get_memberships(parameters, output, allow_multiple,
                                           error);
 
-            g_mutex_unlock(&nss_mutex);
+            rcl_nss_unlock();
         }
     } else {
         success = send_error(output, "org.varlink.service.MethodNotFound",
