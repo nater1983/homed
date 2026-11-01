@@ -377,6 +377,36 @@ test_home_property(Fixture *fixture, gconstpointer data)
 }
 
 
+
+static void
+test_unsupported_home_operation(Fixture *fixture, gconstpointer data)
+{
+    GError *error = NULL;
+    GVariant *home = call_manager(fixture, "GetHomeByName",
+        g_variant_new("(s)", "root"), G_VARIANT_TYPE("(usussso)"), &error);
+    GVariant *path_value;
+    const gchar *path;
+    GVariant *reply;
+    gchar *remote_name;
+    (void) data;
+
+    g_assert_no_error(error);
+    g_assert_nonnull(home);
+    path_value = g_variant_get_child_value(home, 6);
+    path = g_variant_get_string(path_value, NULL);
+    reply = g_dbus_connection_call_sync(fixture->client, BUS_NAME, path,
+        "org.freedesktop.home1.Home", "Activate", NULL, NULL,
+        G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &error);
+    g_assert_null(reply);
+    g_assert_nonnull(error);
+    remote_name = g_dbus_error_get_remote_error(error);
+    g_assert_cmpstr(remote_name, ==, "org.freedesktop.home1.NotSupported");
+    g_free(remote_name);
+    g_clear_error(&error);
+    g_variant_unref(path_value);
+    g_variant_unref(home);
+}
+
 static gpointer
 mixed_nss_worker(gpointer data)
 {
@@ -483,6 +513,8 @@ main(int argc, char **argv)
                test_home_by_uid, teardown);
     g_test_add("/dbus/home-property", Fixture, NULL, setup,
                test_home_property, teardown);
+    g_test_add("/dbus/unsupported-home-operation", Fixture, NULL, setup,
+               test_unsupported_home_operation, teardown);
     g_test_add("/dbus/mixed-nss-concurrency", Fixture, NULL, setup,
                test_mixed_nss_concurrency, teardown);
     return g_test_run();
