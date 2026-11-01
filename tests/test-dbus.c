@@ -53,15 +53,16 @@ service_thread(gpointer data)
         rcl_home_register(home, connection, &error);
 
     g_mutex_lock(&fixture->mutex);
+    fixture->loop = error == NULL ? g_main_loop_new(fixture->context, FALSE) : NULL;
     fixture->startup_error = error;
     fixture->ready = TRUE;
     g_cond_signal(&fixture->cond);
     g_mutex_unlock(&fixture->mutex);
 
     if (error == NULL) {
-        fixture->loop = g_main_loop_new(fixture->context, FALSE);
         g_main_loop_run(fixture->loop);
         g_main_loop_unref(fixture->loop);
+        fixture->loop = NULL;
     }
 
     if (home != NULL)
