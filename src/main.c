@@ -2,6 +2,7 @@
 #include <syslog.h>
 #include <unistd.h>
 
+#include "config.h"
 #include "rcl-home.h"
 #include "rcl-varlink.h"
 
@@ -110,7 +111,7 @@ main(void)
         G_BUS_NAME_OWNER_FLAGS_NONE, bus_acquired, NULL, name_lost, NULL,
         NULL);
 
-    syslog(LOG_INFO, "homed started (0.3.1)");
+    syslog(LOG_INFO, "homed started (" PACKAGE_VERSION ")");
     syslog(LOG_INFO, "homed Varlink listener registered at %s",
            "/run/systemd/userdb/io.systemd.Home");
 
