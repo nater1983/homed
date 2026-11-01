@@ -8,7 +8,7 @@
 
 ## 0.3.1
 
-- No changes from 0.3.0.
+- Split startup and Varlink listener registration into separate syslog messages.
 
 ## 0.3.0
 
