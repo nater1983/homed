@@ -1,6 +1,7 @@
 homed_sources = files(
   'main.c',
   'rcl-home.c',
+  'rcl-nss.c',
   'rcl-varlink.c',
 )
 
