@@ -63,8 +63,16 @@ service_thread(gpointer data)
     }
 
     home = connection != NULL && error == NULL ? rcl_home_new() : NULL;
-    if (home != NULL && reply != 0)
-        rcl_home_register(home, connection, &error);
+    if (home == NULL && error == NULL)
+        g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "cannot initialize home1 test service");
+    if (home != NULL && reply != 1 && reply != 4)
+        g_set_error(&error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                    "cannot own D-Bus test name (reply %u)", reply);
+    if (home != NULL && error == NULL &&
+        !rcl_home_register(home, connection, &error) && error == NULL)
+        g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "cannot register home1 test objects");
 
     g_mutex_lock(&fixture->mutex);
     fixture->loop = error == NULL ? g_main_loop_new(fixture->context, FALSE) : NULL;
