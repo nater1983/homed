@@ -1,5 +1,10 @@
 # ChangeLog
 
+## 0.4.0
+
+- Allow unprivileged system-bus clients to call GetUserRecordByUID, GetUserRecordByName, and GetUserRecordByPID.
+- Keep Varlink connections open for multiple NUL-terminated requests, dispatching each request and returning its response before reading the next request.
+
 ## 0.3.1
 
 - Split startup and Varlink listener registration into separate syslog messages.
