@@ -4,14 +4,24 @@
 #include <gio/gunixsocketaddress.h>
 #include <json-glib/json-glib.h>
 #include <glib/gstdio.h>
+#include <string.h>
 
 typedef struct {
     gchar *directory;
     gchar *socket_path;
     GSocketService *service;
+    GMainLoop *loop;
+    GThread *loop_thread;
 } Fixture;
 
 static Fixture fixture;
+
+static gpointer
+run_loop(gpointer data)
+{
+    g_main_loop_run(data);
+    return NULL;
+}
 
 static void
 setup(Fixture *unused, gconstpointer data)
@@ -29,6 +39,9 @@ setup(Fixture *unused, gconstpointer data)
                                             fixture.socket_path, &error);
     g_assert_no_error(error);
     g_assert_nonnull(fixture.service);
+    fixture.loop = g_main_loop_new(NULL, FALSE);
+    fixture.loop_thread = g_thread_new("varlink-test-loop", run_loop,
+                                       fixture.loop);
 }
 
 static void
@@ -36,6 +49,9 @@ teardown(Fixture *unused, gconstpointer data)
 {
     (void) unused; (void) data;
     rcl_varlink_stop(fixture.service);
+    g_main_loop_quit(fixture.loop);
+    g_thread_join(fixture.loop_thread);
+    g_main_loop_unref(fixture.loop);
     g_rmdir(fixture.directory);
     g_clear_object(&fixture.service);
     g_clear_pointer(&fixture.socket_path, g_free);
