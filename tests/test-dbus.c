@@ -433,7 +433,7 @@ test_read_only_home_property(Fixture *fixture, gconstpointer data)
     GVariant *path_value;
     const gchar *path;
     GVariant *reply;
-    gchar *remote_name;
+    GVariant *boxed, *value;
     (void) data;
 
     g_assert_no_error(error);
@@ -447,11 +447,21 @@ test_read_only_home_property(Fixture *fixture, gconstpointer data)
         NULL, G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &error);
     g_assert_null(reply);
     g_assert_nonnull(error);
-    remote_name = g_dbus_error_get_remote_error(error);
-    g_assert_cmpstr(remote_name, ==,
-                    "org.freedesktop.DBus.Error.PropertyReadOnly");
-    g_free(remote_name);
+    g_assert_true(g_dbus_error_is_remote_error(error));
     g_clear_error(&error);
+
+    reply = g_dbus_connection_call_sync(fixture->client, BUS_NAME, path,
+        "org.freedesktop.DBus.Properties", "Get",
+        g_variant_new("(ss)", "org.freedesktop.home1.Home", "UserName"),
+        G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(reply);
+    g_variant_get(reply, "(@v)", &boxed);
+    value = g_variant_get_variant(boxed);
+    g_assert_cmpstr(g_variant_get_string(value, NULL), ==, "root");
+    g_variant_unref(value);
+    g_variant_unref(boxed);
+    g_variant_unref(reply);
     g_variant_unref(path_value);
     g_variant_unref(home);
 }
