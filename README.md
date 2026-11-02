@@ -122,6 +122,7 @@ Tests are enabled by default. To configure without building the test suite, pass
 | --- | --- | --- |
 | `tests` | `true` | Build and register the test suite. |
 | `privileged-group` | `wheel` | Group used by the installed Polkit rules. |
+| `varlink-vendor` | `N4t3R` | Vendor name reported by `org.varlink.service.GetInfo`. |
 | `dbus_system_service_dir` | empty | Override the D-Bus system service directory. |
 | `dbus_system_conf_dir` | empty | Override the D-Bus system policy directory. |
 | `polkit_policy_dir` | empty | Override the Polkit action policy directory. |
