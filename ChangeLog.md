@@ -1,5 +1,8 @@
 # ChangeLog
 
+## 0.3.3
+
+
 ## 0.3.2
 
 - Backported shared NSS locking for D-Bus and Varlink lookups to prevent concurrent access to NSS state.
