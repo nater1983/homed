@@ -353,12 +353,14 @@ test_home_property(Fixture *fixture, gconstpointer data)
     GError *error = NULL;
     GVariant *home = call_manager(fixture, "GetHomeByName",
         g_variant_new("(s)", "root"), G_VARIANT_TYPE("(usussso)"), &error);
-    GVariant *path_value;
-    const gchar *path;
+    GVariant *path_value, *state_value;
+    const gchar *path, *manager_state;
     GVariant *reply, *boxed, *value;
     (void) data;
     g_assert_no_error(error);
     g_assert_nonnull(home);
+    state_value = g_variant_get_child_value(home, 1);
+    manager_state = g_variant_get_string(state_value, NULL);
     path_value = g_variant_get_child_value(home, 6);
     path = g_variant_get_string(path_value, NULL);
     reply = g_dbus_connection_call_sync(fixture->client, BUS_NAME, path,
@@ -374,7 +376,7 @@ test_home_property(Fixture *fixture, gconstpointer data)
     g_variant_unref(boxed);
     g_variant_unref(reply);
 
-    reply = g_dbus_connection_call_sync(fixture->client, path,
+    reply = g_dbus_connection_call_sync(fixture->client, BUS_NAME, path,
         "org.freedesktop.DBus.Properties", "Get",
         g_variant_new("(ss)", "org.freedesktop.home1.Home", "State"),
         G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &error);
