@@ -2,7 +2,8 @@
 
 ## 0.3.3
 
-- Restricted default D-Bus Properties access to Get and GetAll, preventing default users from invoking property writes.
+- Backported D-Bus Properties security hardening from 0.4.0, restricting default users to Get and GetAll and preventing property writes.
+
 
 
 ## 0.3.2
