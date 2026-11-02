@@ -154,18 +154,18 @@ Other manager methods can be exercised with `GetHomeByName`, `GetHomeByUID`, `Ge
 
 ### Varlink
 
-With a Varlink client installed, query the root user, root group, and root memberships:
+Use `varlinkctl` to query the root user, root group, and root memberships:
 
 ```sh
-varlink call unix:/run/systemd/userdb/io.systemd.Home \
+varlinkctl call unix:/run/systemd/userdb/io.systemd.Home \
   io.systemd.UserDatabase.GetUserRecord \
   '{"userName":"root","service":"io.systemd.Home"}'
 
-varlink call unix:/run/systemd/userdb/io.systemd.Home \
+varlinkctl call unix:/run/systemd/userdb/io.systemd.Home \
   io.systemd.UserDatabase.GetGroupRecord \
   '{"groupName":"root","service":"io.systemd.Home"}'
 
-varlink call unix:/run/systemd/userdb/io.systemd.Home \
+varlinkctl call unix:/run/systemd/userdb/io.systemd.Home \
   io.systemd.UserDatabase.GetMemberships \
   '{"userName":"root","service":"io.systemd.Home"}'
 ```
