@@ -30,7 +30,11 @@ The manager currently implements:
 | `GetUserRecordByPID` | Resolve the real UID of a process and return its user record. |
 | `AutoLogin` | Read-only property; currently returns an empty array. |
 
-Each NSS account discovered by the daemon is represented by a per-home object at `/org/freedesktop/home1/home/_UID`. These objects expose read-only account properties. The `Activate`, `Deactivate`, `Lock`, `Unlock`, and `Resize` methods are declared but return `org.freedesktop.home1.NotSupported`.
+Each NSS account discovered by the daemon is represented by a per-home object at `/org/freedesktop/home1/home/_UID`. These objects expose read-only account properties.
+
+The `State` property reports conventional home-directory availability: it returns `active` when the NSS home path exists, is a directory, and is readable/searchable by the daemon; otherwise it returns `inactive`. The manager methods `GetHomeByName`, `GetHomeByUID`, and `ListHomes` use the same check so their state values agree with the per-home property. This is an availability indication only; it does not mean that `homed` has unlocked, mounted, or activated managed storage.
+
+The `Activate`, `Deactivate`, `Lock`, `Unlock`, and `Resize` methods are declared but return `org.freedesktop.home1.NotSupported`.
 
 User records currently contain the NSS-derived fields `userName`, `uid`, `gid`, `realName`, `homeDirectory`, `shell`, `service`, and `disposition`. D-Bus records identify their source as `nss`.
 
