@@ -259,14 +259,14 @@ test_pipelined_requests(Fixture *unused, gconstpointer data)
     GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
     GInputStream *input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
     const gchar requests[] =
-        "{\\"method\\":\\"io.systemd.UserDatabase.GetUserRecord\\","
-        "\\"parameters\\":{\\"service\\":\\"io.systemd.Home\\","
-        "\\"userName\\":\\"root\\"}}"
-        "\\0"
-        "{\\"method\\":\\"io.systemd.UserDatabase.GetGroupRecord\\","
-        "\\"parameters\\":{\\"service\\":\\"io.systemd.Home\\","
-        "\\"groupName\\":\\"root\\"}}"
-        "\\0";
+        "{\"method\":\"io.systemd.UserDatabase.GetUserRecord\","
+        "\"parameters\":{\"service\":\"io.systemd.Home\","
+        "\"userName\":\"root\"}}"
+        "\0"
+        "{\"method\":\"io.systemd.UserDatabase.GetGroupRecord\","
+        "\"parameters\":{\"service\":\"io.systemd.Home\","
+        "\"groupName\":\"root\"}}"
+        "\0";
     GError *error = NULL;
 
     g_assert_true(g_output_stream_write_all(output, requests,
@@ -275,8 +275,8 @@ test_pipelined_requests(Fixture *unused, gconstpointer data)
 
     gchar *user = read_reply(input);
     gchar *group = read_reply(input);
-    assert_reply_contains(user, "\\"userName\\":\\"root\\"");
-    assert_reply_contains(group, "\\"groupName\\":\\"root\\"");
+    assert_reply_contains(user, "\"userName\":\"root\"");
+    assert_reply_contains(group, "\"groupName\":\"root\"");
     g_free(user);
     g_free(group);
     g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
