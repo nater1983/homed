@@ -231,6 +231,58 @@ test_multiple_requests(Fixture *unused, gconstpointer data)
 }
 
 
+
+static gchar *
+read_reply(GInputStream *input)
+{
+    GByteArray *reply = g_byte_array_new();
+    guint8 byte;
+    GError *error = NULL;
+
+    do {
+        gssize count = g_input_stream_read(input, &byte, 1, NULL, &error);
+        g_assert_no_error(error);
+        g_assert_cmpint(count, ==, 1);
+        if (byte != 0)
+            g_byte_array_append(reply, &byte, 1);
+    } while (byte != 0);
+
+    g_byte_array_append(reply, (const guint8 *)"", 1);
+    return (gchar *) g_byte_array_free(reply, FALSE);
+}
+
+static void
+test_pipelined_requests(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    GSocketConnection *connection = connect_socket();
+    GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
+    GInputStream *input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
+    const gchar requests[] =
+        "{\\"method\\":\\"io.systemd.UserDatabase.GetUserRecord\\","
+        "\\"parameters\\":{\\"service\\":\\"io.systemd.Home\\","
+        "\\"userName\\":\\"root\\"}}"
+        "\\0"
+        "{\\"method\\":\\"io.systemd.UserDatabase.GetGroupRecord\\","
+        "\\"parameters\\":{\\"service\\":\\"io.systemd.Home\\","
+        "\\"groupName\\":\\"root\\"}}"
+        "\\0";
+    GError *error = NULL;
+
+    g_assert_true(g_output_stream_write_all(output, requests,
+        sizeof(requests) - 1, NULL, NULL, &error));
+    g_assert_no_error(error);
+
+    gchar *user = read_reply(input);
+    gchar *group = read_reply(input);
+    assert_reply_contains(user, "\\"userName\\":\\"root\\"");
+    assert_reply_contains(group, "\\"groupName\\":\\"root\\"");
+    g_free(user);
+    g_free(group);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
 static void
 test_user_record_by_uid(Fixture *unused, gconstpointer data)
 {
@@ -357,6 +409,8 @@ main(int argc, char **argv)
                test_invalid_json, teardown);
     g_test_add("/varlink/multiple-requests", Fixture, NULL, setup,
                test_multiple_requests, teardown);
+    g_test_add("/varlink/pipelined-requests", Fixture, NULL, setup,
+               test_pipelined_requests, teardown);
     g_test_add("/varlink/concurrent-requests", Fixture, NULL, setup,
                test_concurrent_requests, teardown);
     return g_test_run();
