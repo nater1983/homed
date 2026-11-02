@@ -438,7 +438,7 @@ send_service_info(GOutputStream *output, GError **error)
     JsonObject *parameters = json_object_new_empty();
     JsonArray *interfaces = json_array_new();
 
-    json_object_set_string_member(parameters, "vendor", "N4t3R");
+    json_object_set_string_member(parameters, "vendor", VARLINK_VENDOR);
     json_object_set_string_member(parameters, "product", "homed");
     json_object_set_string_member(parameters, "version", PACKAGE_VERSION);
     json_object_set_string_member(parameters, "url",
