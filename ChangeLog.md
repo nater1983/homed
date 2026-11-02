@@ -2,6 +2,8 @@
 
 ## 0.4.0
 
+- Added the `varlink-vendor` Meson option to configure the vendor reported by `org.varlink.service.GetInfo`.
+
 - Report NSS home-directory availability through the per-home State property and GetHomeByName, GetHomeByUID, and ListHomes; document that this does not represent managed-home activation.
 - Added D-Bus regression coverage ensuring the manager state and per-home State property agree.
 
