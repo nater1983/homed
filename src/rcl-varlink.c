@@ -480,7 +480,8 @@ dispatch_request(GOutputStream *output, const gchar *data, GError **error)
     if (g_str_equal(method, USER_DATABASE ".GetUserRecord") ||
         g_str_equal(method, USER_DATABASE ".GetGroupRecord") ||
         g_str_equal(method, USER_DATABASE ".GetMemberships")) {
-        if (service == NULL || !g_str_equal(service, VARLINK_SERVICE)) {
+        if (json_object_has_member(parameters, "service") &&
+            (service == NULL || !g_str_equal(service, VARLINK_SERVICE))) {
             success = send_error(output, USER_DATABASE ".BadService", error);
         } else {
             rcl_nss_lock();
