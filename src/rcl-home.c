@@ -93,7 +93,7 @@ static void return_home(GDBusMethodInvocation *inv, const struct passwd *pw, gbo
             pw->pw_dir ? pw->pw_dir : "", pw_shell(pw), path));
     else
         g_dbus_method_invocation_return_value(inv, g_variant_new("(ssussso)",
-            pw->pw_name ? pw->pw_name : "", "inactive", (guint32)pw->pw_gid,
+            pw->pw_name ? pw->pw_name : "", state, (guint32)pw->pw_gid,
             gecos, pw->pw_dir ? pw->pw_dir : "", pw_shell(pw), path));
     g_free(path);
 }
