@@ -1,4 +1,5 @@
 #include "rcl-varlink.h"
+#include "config.h"
 #include "rcl-nss.h"
 
 #include <gio/gunixsocketaddress.h>
@@ -432,6 +433,23 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
 }
 
 static gboolean
+send_service_info(GOutputStream *output, GError **error)
+{
+    JsonObject *parameters = json_object_new_empty();
+    JsonArray *interfaces = json_array_new();
+
+    json_object_set_string_member(parameters, "vendor", "N4t3R");
+    json_object_set_string_member(parameters, "product", "homed");
+    json_object_set_string_member(parameters, "version", PACKAGE_VERSION);
+    json_object_set_string_member(parameters, "url",
+                                  "https://github.com/nater1983/homed");
+    json_array_add_string_element(interfaces, USER_DATABASE);
+    json_object_set_array_member(parameters, "interfaces", interfaces);
+
+    return send_reply(output, parameters, FALSE, error);
+}
+
+static gboolean
 dispatch_request(GOutputStream *output, const gchar *data, GError **error)
 {
     JsonParser *parser = json_parser_new();
@@ -474,6 +492,11 @@ dispatch_request(GOutputStream *output, const gchar *data, GError **error)
         if (more != NULL && JSON_NODE_HOLDS_VALUE(more) &&
             json_node_get_value_type(more) == G_TYPE_BOOLEAN)
             allow_multiple = json_node_get_boolean(more);
+    }
+
+    if (g_str_equal(method, "org.varlink.service.GetInfo")) {
+        success = send_service_info(output, error);
+        goto out;
     }
 
     service = get_string(parameters, "service");
