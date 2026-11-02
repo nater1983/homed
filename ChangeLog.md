@@ -2,13 +2,14 @@
 
 ## 0.3.3
 
+- Restricted default D-Bus Properties access to Get and GetAll, preventing default users from invoking property writes.
+
 
 ## 0.3.2
 
 - Backported shared NSS locking for D-Bus and Varlink lookups to prevent concurrent access to NSS state.
 - Added default D-Bus policy permissions for GetUserRecordByUID, GetUserRecordByName, and GetUserRecordByPID.
 - Use the configured package version in the startup log instead of a hardcoded version string.
-- Restricted default D-Bus Properties access to Get and GetAll, preventing default users from invoking property writes.
 
 ## 0.3.1
 
