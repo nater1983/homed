@@ -2,6 +2,9 @@
 
 ## 0.4.0
 
+- Report NSS home-directory availability through the per-home State property and GetHomeByName, GetHomeByUID, and ListHomes; document that this does not represent managed-home activation.
+- Added D-Bus regression coverage ensuring the manager state and per-home State property agree.
+
 - Added isolated D-Bus integration tests for user lookups by name, UID, and PID, home lookups by name and UID, home properties, home enumeration, unsupported lifecycle operations, and missing-user errors.
 - Added isolated Varlink integration tests for user, group, and membership records, invalid JSON, unsupported methods, bad service names, persistent connections, and concurrent clients.
 - Added a mixed D-Bus/Varlink concurrency regression test exercising the shared NSS mutex from both interfaces.
