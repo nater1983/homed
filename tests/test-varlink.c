@@ -1,5 +1,6 @@
 #include "rcl-nss.h"
 #include "rcl-varlink.h"
+#include "config.h"
 
 #include <gio/gunixsocketaddress.h>
 #include <json-glib/json-glib.h>
