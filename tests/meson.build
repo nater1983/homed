@@ -11,7 +11,7 @@ test_varlink = executable('test-varlink',
   '../src/rcl-varlink.c',
   '../src/rcl-nss.c',
   dependencies: [glib_dep, gio_dep, gio_unix, json_glib],
-  include_directories: [include_directories('../src'), include_directories('..')])
+  include_directories: [include_directories('../src'), config_h_inc])
 
 test('varlink-integration', test_varlink, timeout: 60)
 
@@ -21,6 +21,6 @@ test_dbus = executable('test-dbus',
   '../src/rcl-varlink.c',
   '../src/rcl-nss.c',
   dependencies: [glib_dep, gio_dep, gio_unix, json_glib],
-  include_directories: include_directories('../src'))
+  include_directories: [include_directories('../src'), config_h_inc])
 
 test('dbus-integration', test_dbus, timeout: 60)
