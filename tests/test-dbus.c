@@ -3,6 +3,7 @@
 #include <gio/gunixsocketaddress.h>
 #include <glib/gstdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include <gio/gio.h>
 #include <unistd.h>
@@ -372,6 +373,20 @@ test_home_property(Fixture *fixture, gconstpointer data)
     g_variant_unref(value);
     g_variant_unref(boxed);
     g_variant_unref(reply);
+
+    reply = g_dbus_connection_call_sync(fixture->client, path,
+        "org.freedesktop.DBus.Properties", "Get",
+        g_variant_new("(ss)", "org.freedesktop.home1.Home", "State"),
+        G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(reply);
+    g_variant_get(reply, "(@v)", &boxed);
+    value = g_variant_get_variant(boxed);
+    g_assert_cmpstr(g_variant_get_string(value, NULL), ==, manager_state);
+    g_variant_unref(value);
+    g_variant_unref(boxed);
+    g_variant_unref(reply);
+    g_variant_unref(state_value);
     g_variant_unref(path_value);
     g_variant_unref(home);
 }
