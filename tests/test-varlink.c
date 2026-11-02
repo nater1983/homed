@@ -108,6 +108,24 @@ assert_reply_contains(const gchar *reply, const gchar *needle)
 }
 
 static void
+test_get_info(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    GSocketConnection *connection = connect_socket();
+    gchar *reply = exchange(connection,
+        "{\\"method\\":\\"org.varlink.service.GetInfo\\",\\"parameters\\":{}}");
+
+    assert_reply_contains(reply, "\\"vendor\\":\\"N4t3R\\"");
+    assert_reply_contains(reply, "\\"product\\":\\"homed\\"");
+    assert_reply_contains(reply, "\\"version\\":\\"0.4.0\\"");
+    assert_reply_contains(reply, "\\"io.systemd.UserDatabase\\"");
+    assert_reply_contains(reply, "\\"continues\\":false");
+    g_free(reply);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
+static void
 test_user_record(Fixture *unused, gconstpointer data)
 {
     (void) unused; (void) data;
@@ -313,6 +331,8 @@ int
 main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
+    g_test_add("/varlink/get-info", Fixture, NULL, setup,
+               test_get_info, teardown);
     g_test_add("/varlink/user-record", Fixture, NULL, setup,
                test_user_record, teardown);
     g_test_add("/varlink/group-record", Fixture, NULL, setup,
