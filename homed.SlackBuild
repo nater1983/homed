@@ -4,7 +4,7 @@ cd "$(dirname "$0")"; CWD=$(pwd)
 PRGNAM=homed
 VERSION=${VERSION:-0.4.0}
 BUILD=${BUILD:-1}
-TAG=${TAG:-_rdlnx}
+TAG=${TAG:-rdlnx}
 PKGTYPE=${PKGTYPE:-txz}
 if [ -z "${ARCH:-}" ]; then
   case "$(uname -m)" in i?86) ARCH=i586 ;; arm*) ARCH=arm ;; *) ARCH=$(uname -m) ;; esac
