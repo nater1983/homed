@@ -272,9 +272,9 @@ exchange_memberships(GSocketConnection *connection, const gchar *parameters)
     GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
     GInputStream *input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
     gchar *request = g_strdup_printf(
-        "{\\"method\\":\\"io.systemd.UserDatabase.GetMemberships\\","
-        "\\"parameters\\":{%s},\\"more\\":true}", parameters);
-    gchar *framed = g_strconcat(request, "\\0", NULL);
+        "{\"method\":\"io.systemd.UserDatabase.GetMemberships\","
+        "\"parameters\":{%s},\"more\":true}", parameters);
+    gchar *framed = g_strconcat(request, "\0", NULL);
     GError *error = NULL;
     GPtrArray *replies = g_ptr_array_new_with_free_func(g_free);
 
@@ -308,7 +308,7 @@ test_membership_consistency(Fixture *unused, gconstpointer data)
     (void) unused; (void) data;
     GSocketConnection *connection = connect_socket();
     GPtrArray *user_replies = exchange_memberships(connection,
-        "\\"service\\":\\"io.systemd.Home\\",\\"userName\\":\\"root\\"");
+        "\"service\":\"io.systemd.Home\",\"userName\":\"root\"");
     gboolean found_root_group = FALSE;
 
     g_assert_cmpuint(user_replies->len, >, 0);
@@ -329,7 +329,7 @@ test_membership_consistency(Fixture *unused, gconstpointer data)
     g_assert_true(found_root_group);
 
     GPtrArray *group_replies = exchange_memberships(connection,
-        "\\"service\\":\\"io.systemd.Home\\",\\"groupName\\":\\"root\\"");
+        "\"service\":\"io.systemd.Home\",\"groupName\":\"root\"");
     gboolean found_root_user = FALSE;
 
     g_assert_cmpuint(group_replies->len, >, 0);
@@ -361,8 +361,8 @@ test_listener_restart(Fixture *unused, gconstpointer data)
     GError *error = NULL;
     GSocketConnection *connection = connect_socket();
     gchar *reply = exchange(connection,
-        "{\\"method\\":\\"org.varlink.service.GetInfo\\",\\"parameters\\":{}}");
-    assert_reply_contains(reply, "\\"product\\":\\"homed\\"");
+        "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{}}");
+    assert_reply_contains(reply, "\"product\":\"homed\"");
     g_free(reply);
     g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
     g_object_unref(connection);
@@ -378,9 +378,9 @@ test_listener_restart(Fixture *unused, gconstpointer data)
 
     connection = connect_socket();
     reply = exchange(connection,
-        "{\\"method\\":\\"io.systemd.UserDatabase.GetUserRecord\\","
-        "\\"parameters\\":{\\"service\\":\\"io.systemd.Home\\",\\"userName\\":\\"root\\"}}");
-    assert_reply_contains(reply, "\\"userName\\":\\"root\\"");
+        "{\"method\":\"io.systemd.UserDatabase.GetUserRecord\","
+        "\"parameters\":{\"service\":\"io.systemd.Home\",\"userName\":\"root\"}}");
+    assert_reply_contains(reply, "\"userName\":\"root\"");
     g_free(reply);
     g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
     g_object_unref(connection);
