@@ -1,5 +1,6 @@
 #include "rcl-home.h"
 #include "rcl-varlink.h"
+#include "rcl-nss.h"
 #include <gio/gunixsocketaddress.h>
 #include <glib/gstdio.h>
 #include <string.h>
@@ -239,6 +240,24 @@ assert_user_record(GVariant *reply)
     g_assert_true(g_variant_lookup(record, "uid", "u", &uid));
     g_assert_cmpuint(uid, ==, 0);
     g_variant_unref(record);
+}
+
+static void
+test_nss_lock_contention(Fixture *fixture, gconstpointer data)
+{
+    GError *error = NULL;
+    GVariant *reply;
+    (void) data;
+
+    rcl_nss_lock();
+    reply = call_manager(fixture, "GetUserRecordByName",
+        g_variant_new("(s)", "root"), G_VARIANT_TYPE("(a{sv}b)"), &error);
+    rcl_nss_unlock();
+
+    g_assert_null(reply);
+    g_assert_nonnull(error);
+    g_assert_true(g_dbus_error_is_remote_error(error));
+    g_clear_error(&error);
 }
 
 static void
@@ -604,6 +623,8 @@ main(int argc, char **argv)
     g_test_init(&argc, &argv, NULL);
     g_test_add("/dbus/record-by-name", Fixture, NULL, setup,
                test_record_by_name, teardown);
+    g_test_add("/dbus/nss-lock-contention", Fixture, NULL, setup,
+               test_nss_lock_contention, teardown);
     g_test_add("/dbus/record-by-uid", Fixture, NULL, setup,
                test_record_by_uid, teardown);
     g_test_add("/dbus/record-by-pid", Fixture, NULL, setup,
