@@ -164,6 +164,38 @@ test_group_record(Fixture *unused, gconstpointer data)
 }
 
 static void
+test_group_record_by_gid(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    GSocketConnection *connection = connect_socket();
+    gchar *reply = exchange(connection,
+        "{\\"method\\":\\"io.systemd.UserDatabase.GetGroupRecord\\","
+        "\\"parameters\\":{\\"service\\":\\"io.systemd.Home\\",\\"gid\\":0}}");
+
+    assert_reply_contains(reply, "\\"groupName\\":\\"root\\"");
+    assert_reply_contains(reply, "\\"gid\\":0");
+    g_free(reply);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
+static void
+test_conflicting_group_identity(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    GSocketConnection *connection = connect_socket();
+    gchar *reply = exchange(connection,
+        "{\\"method\\":\\"io.systemd.UserDatabase.GetGroupRecord\\","
+        "\\"parameters\\":{\\"service\\":\\"io.systemd.Home\\","
+        "\\"groupName\\":\\"root\\",\\"gid\\":1}}");
+
+    assert_reply_contains(reply, "io.systemd.UserDatabase.ConflictingRecordFound");
+    g_free(reply);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
+static void
 test_memberships(Fixture *unused, gconstpointer data)
 {
     (void) unused; (void) data;
@@ -393,6 +425,10 @@ main(int argc, char **argv)
                test_user_record, teardown);
     g_test_add("/varlink/group-record", Fixture, NULL, setup,
                test_group_record, teardown);
+    g_test_add("/varlink/group-record-by-gid", Fixture, NULL, setup,
+               test_group_record_by_gid, teardown);
+    g_test_add("/varlink/conflicting-group-identity", Fixture, NULL, setup,
+               test_conflicting_group_identity, teardown);
     g_test_add("/varlink/user-record-by-uid", Fixture, NULL, setup,
                test_user_record_by_uid, teardown);
     g_test_add("/varlink/missing-user", Fixture, NULL, setup,
