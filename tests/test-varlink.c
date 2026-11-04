@@ -169,11 +169,11 @@ test_group_record_by_gid(Fixture *unused, gconstpointer data)
     (void) unused; (void) data;
     GSocketConnection *connection = connect_socket();
     gchar *reply = exchange(connection,
-        "{\\"method\\":\\"io.systemd.UserDatabase.GetGroupRecord\\","
-        "\\"parameters\\":{\\"service\\":\\"io.systemd.Home\\",\\"gid\\":0}}");
+        "{\"method\":\"io.systemd.UserDatabase.GetGroupRecord\","
+        "\"parameters\":{\"service\":\"io.systemd.Home\",\"gid\":0}}");
 
-    assert_reply_contains(reply, "\\"groupName\\":\\"root\\"");
-    assert_reply_contains(reply, "\\"gid\\":0");
+    assert_reply_contains(reply, "\"groupName\":\"root\"");
+    assert_reply_contains(reply, "\"gid\":0");
     g_free(reply);
     g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
     g_object_unref(connection);
@@ -185,14 +185,13 @@ test_conflicting_group_identity(Fixture *unused, gconstpointer data)
     (void) unused; (void) data;
     GSocketConnection *connection = connect_socket();
     gchar *reply = exchange(connection,
-        "{\\"method\\":\\"io.systemd.UserDatabase.GetGroupRecord\\","
-        "\\"parameters\\":{\\"service\\":\\"io.systemd.Home\\","
-        "\\"groupName\\":\\"root\\",\\"gid\\":1}}");
+        "{\"method\":\"io.systemd.UserDatabase.GetGroupRecord\","
+        "\"parameters\":{\"service\":\"io.systemd.Home\","
+        "\"groupName\":\"root\",\"gid\":1}}");
 
     assert_reply_contains(reply, "io.systemd.UserDatabase.ConflictingRecordFound");
     g_free(reply);
     g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-    g_object_unref(connection);
 }
 
 static void
