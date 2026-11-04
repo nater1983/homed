@@ -15,6 +15,11 @@
 - Allow unprivileged system-bus clients to call GetUserRecordByUID, GetUserRecordByName, and GetUserRecordByPID.
 - Keep Varlink connections open for multiple NUL-terminated requests, dispatching each request and returning its response before reading the next request.
 
+- Unified Varlink membership queries around NSS supplementary-group lookup so user-to-group and group-to-user membership results use consistent semantics; added membership consistency regression coverage.
+- Added Varlink listener restart regression coverage to verify that the socket can be removed and recreated and that lookups work after restart.
+- Added bounded NSS mutex acquisition for D-Bus and Varlink requests so requests return an error instead of waiting indefinitely when NSS remains busy.
+- Added D-Bus and Varlink lock-contention regression tests, plus a test-only simulated NSS provider re-entry test verifying that a nested request fails with `ServiceNotAvailable` while the outer request can complete.
+
 ## 0.3.1
 
 - Split startup and Varlink listener registration into separate syslog messages.
