@@ -355,6 +355,26 @@ test_membership_consistency(Fixture *unused, gconstpointer data)
 }
 
 static void
+test_nss_lock_contention(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    GSocketConnection *connection = connect_socket();
+
+    rcl_nss_lock();
+    gchar *reply = exchange(connection,
+        "{\"method\":\"io.systemd.UserDatabase.GetUserRecord\","
+        "\"parameters\":{\"service\":\"io.systemd.Home\","
+        "\"userName\":\"root\"}}");
+    rcl_nss_unlock();
+
+    assert_reply_contains(reply,
+        "io.systemd.UserDatabase.ServiceNotAvailable");
+    g_free(reply);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
+static void
 test_listener_restart(Fixture *unused, gconstpointer data)
 {
     (void) unused; (void) data;
@@ -542,6 +562,8 @@ main(int argc, char **argv)
                test_membership_consistency, teardown);
     g_test_add("/varlink/listener-restart", Fixture, NULL, setup,
                test_listener_restart, teardown);
+    g_test_add("/varlink/nss-lock-contention", Fixture, NULL, setup,
+               test_nss_lock_contention, teardown);
     g_test_add("/varlink/unknown-method", Fixture, NULL, setup,
                test_unknown_method, teardown);
     g_test_add("/varlink/bad-service", Fixture, NULL, setup,
