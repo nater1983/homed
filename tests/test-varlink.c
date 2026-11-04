@@ -194,22 +194,6 @@ test_conflicting_group_identity(Fixture *unused, gconstpointer data)
     g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
 }
 
-static void
-test_memberships(Fixture *unused, gconstpointer data)
-{
-    (void) unused; (void) data;
-    GSocketConnection *connection = connect_socket();
-    gchar *reply = exchange(connection,
-        "{\"method\":\"io.systemd.UserDatabase.GetMemberships\","
-        "\"parameters\":{\"service\":\"io.systemd.Home\","
-        "\"userName\":\"root\",\"groupName\":\"root\"}}");
-
-    assert_reply_contains(reply, "\"userName\":\"root\"");
-    assert_reply_contains(reply, "\"groupName\":\"root\"");
-    g_free(reply);
-    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-    g_object_unref(connection);
-}
 
 static void
 test_unknown_method(Fixture *unused, gconstpointer data)
@@ -280,6 +264,126 @@ read_reply(GInputStream *input)
 
     g_byte_array_append(reply, (const guint8 *)"", 1);
     return (gchar *) g_byte_array_free(reply, FALSE);
+}
+
+static GPtrArray *
+exchange_memberships(GSocketConnection *connection, const gchar *parameters)
+{
+    GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
+    GInputStream *input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
+    gchar *request = g_strdup_printf(
+        "{\\"method\\":\\"io.systemd.UserDatabase.GetMemberships\\","
+        "\\"parameters\\":{%s},\\"more\\":true}", parameters);
+    gchar *framed = g_strconcat(request, "\\0", NULL);
+    GError *error = NULL;
+    GPtrArray *replies = g_ptr_array_new_with_free_func(g_free);
+
+    g_assert_true(g_output_stream_write_all(output, framed, strlen(framed) + 1,
+                                            NULL, NULL, &error));
+    g_assert_no_error(error);
+    g_free(request);
+    g_free(framed);
+
+    for (;;) {
+        gchar *reply = read_reply(input);
+        JsonParser *parser = json_parser_new();
+        JsonObject *object;
+        gboolean continues;
+
+        g_assert_true(json_parser_load_from_data(parser, reply, -1, &error));
+        g_assert_no_error(error);
+        object = json_node_get_object(json_parser_get_root(parser));
+        continues = json_object_get_boolean_member(object, "continues");
+        g_ptr_array_add(replies, reply);
+        g_object_unref(parser);
+        if (!continues)
+            break;
+    }
+    return replies;
+}
+
+static void
+test_membership_consistency(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    GSocketConnection *connection = connect_socket();
+    GPtrArray *user_replies = exchange_memberships(connection,
+        "\\"service\\":\\"io.systemd.Home\\",\\"userName\\":\\"root\\"");
+    gboolean found_root_group = FALSE;
+
+    g_assert_cmpuint(user_replies->len, >, 0);
+    for (guint i = 0; i < user_replies->len; i++) {
+        JsonParser *parser = json_parser_new();
+        JsonObject *response, *parameters;
+        g_assert_true(json_parser_load_from_data(parser,
+            g_ptr_array_index(user_replies, i), -1, NULL));
+        response = json_node_get_object(json_parser_get_root(parser));
+        parameters = json_object_get_object_member(response, "parameters");
+        g_assert_cmpstr(json_object_get_string_member(parameters, "userName"),
+                        ==, "root");
+        if (g_str_equal(json_object_get_string_member(parameters, "groupName"),
+                        "root"))
+            found_root_group = TRUE;
+        g_object_unref(parser);
+    }
+    g_assert_true(found_root_group);
+
+    GPtrArray *group_replies = exchange_memberships(connection,
+        "\\"service\\":\\"io.systemd.Home\\",\\"groupName\\":\\"root\\"");
+    gboolean found_root_user = FALSE;
+
+    g_assert_cmpuint(group_replies->len, >, 0);
+    for (guint i = 0; i < group_replies->len; i++) {
+        JsonParser *parser = json_parser_new();
+        JsonObject *response, *parameters;
+        g_assert_true(json_parser_load_from_data(parser,
+            g_ptr_array_index(group_replies, i), -1, NULL));
+        response = json_node_get_object(json_parser_get_root(parser));
+        parameters = json_object_get_object_member(response, "parameters");
+        g_assert_cmpstr(json_object_get_string_member(parameters, "groupName"),
+                        ==, "root");
+        if (g_str_equal(json_object_get_string_member(parameters, "userName"),
+                        "root"))
+            found_root_user = TRUE;
+        g_object_unref(parser);
+    }
+    g_assert_true(found_root_user);
+    g_ptr_array_unref(user_replies);
+    g_ptr_array_unref(group_replies);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
+static void
+test_listener_restart(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    GError *error = NULL;
+    GSocketConnection *connection = connect_socket();
+    gchar *reply = exchange(connection,
+        "{\\"method\\":\\"org.varlink.service.GetInfo\\",\\"parameters\\":{}}");
+    assert_reply_contains(reply, "\\"product\\":\\"homed\\"");
+    g_free(reply);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+
+    rcl_varlink_stop(fixture.service);
+    fixture.service = NULL;
+    g_assert_false(g_file_test(fixture.socket_path, G_FILE_TEST_EXISTS));
+    fixture.service = rcl_varlink_start_at(fixture.directory,
+                                            fixture.socket_path, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(fixture.service);
+    g_assert_true(g_file_test(fixture.socket_path, G_FILE_TEST_EXISTS));
+
+    connection = connect_socket();
+    reply = exchange(connection,
+        "{\\"method\\":\\"io.systemd.UserDatabase.GetUserRecord\\","
+        "\\"parameters\\":{\\"service\\":\\"io.systemd.Home\\",\\"userName\\":\\"root\\"}}");
+    assert_reply_contains(reply, "\\"userName\\":\\"root\\"");
+    g_free(reply);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
 }
 
 static void
@@ -434,8 +538,10 @@ main(int argc, char **argv)
                test_missing_user, teardown);
     g_test_add("/varlink/conflicting-user-identity", Fixture, NULL, setup,
                test_conflicting_user_identity, teardown);
-    g_test_add("/varlink/memberships", Fixture, NULL, setup,
-               test_memberships, teardown);
+    g_test_add("/varlink/membership-consistency", Fixture, NULL, setup,
+               test_membership_consistency, teardown);
+    g_test_add("/varlink/listener-restart", Fixture, NULL, setup,
+               test_listener_restart, teardown);
     g_test_add("/varlink/unknown-method", Fixture, NULL, setup,
                test_unknown_method, teardown);
     g_test_add("/varlink/bad-service", Fixture, NULL, setup,
