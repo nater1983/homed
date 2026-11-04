@@ -313,19 +313,72 @@ group_lookup(JsonObject *parameters, GOutputStream *output, GError **error)
     return send_group_record(output, group, error);
 }
 
-static gboolean
-user_is_member(const struct passwd *user, const struct group *group)
+static GArray *
+get_user_groups(const gchar *user_name, gid_t primary_gid)
 {
-    if (user->pw_gid == group->gr_gid)
-        return TRUE;
+    int allocated = 16;
+    int count = allocated;
+    gid_t *groups = g_new(gid_t, allocated);
+    GArray *result = g_array_new(FALSE, FALSE, sizeof(gid_t));
 
-    for (gchar **member = group->gr_mem; member != NULL && *member != NULL;
-         member++) {
-        if (g_str_equal(*member, user->pw_name))
-            return TRUE;
+    if (getgrouplist(user_name, primary_gid, groups, &count) < 0) {
+        if (count <= allocated) {
+            g_free(groups);
+            return result;
+        }
+
+        allocated = count;
+        groups = g_renew(gid_t, groups, allocated);
+        count = allocated;
+        if (getgrouplist(user_name, primary_gid, groups, &count) < 0) {
+            g_free(groups);
+            return result;
+        }
     }
 
-    return FALSE;
+    for (int i = 0; i < count; i++) {
+        gboolean found = FALSE;
+        for (guint j = 0; j < result->len; j++) {
+            if (g_array_index(result, gid_t, j) == groups[i]) {
+                found = TRUE;
+                break;
+            }
+        }
+        if (!found)
+            g_array_append_val(result, groups[i]);
+    }
+
+    g_free(groups);
+    return result;
+}
+
+static gboolean
+user_is_member(const gchar *user_name, gid_t primary_gid, gid_t group_gid)
+{
+    GArray *groups = get_user_groups(user_name, primary_gid);
+    gboolean found = FALSE;
+
+    for (guint i = 0; i < groups->len; i++) {
+        if (g_array_index(groups, gid_t, i) == group_gid) {
+            found = TRUE;
+            break;
+        }
+    }
+    g_array_unref(groups);
+    return found;
+}
+
+typedef struct {
+    gchar *name;
+    gid_t primary_gid;
+} UserIdentity;
+
+static void
+user_identity_free(gpointer data)
+{
+    UserIdentity *user = data;
+    g_free(user->name);
+    g_free(user);
 }
 
 static void
@@ -372,14 +425,18 @@ static gboolean
 get_memberships(JsonObject *parameters, GOutputStream *output,
                 gboolean allow_multiple, GError **error)
 {
-    const gchar *user_name = get_string(parameters, "userName");
-    const gchar *group_name = get_string(parameters, "groupName");
+    const gchar *requested_user = get_string(parameters, "userName");
+    const gchar *requested_group = get_string(parameters, "groupName");
+    gchar *user_name = g_strdup(requested_user);
+    gchar *group_name = g_strdup(requested_group);
     GPtrArray *memberships = g_ptr_array_new_with_free_func(membership_free);
     struct passwd *user = NULL;
     struct group *group = NULL;
     gboolean success;
 
     if (user_name == NULL && group_name == NULL) {
+        g_free(group_name);
+        g_free(user_name);
         g_ptr_array_unref(memberships);
         return send_error(output, USER_DATABASE ".EnumerationNotSupported",
                           error);
@@ -392,43 +449,59 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
 
     if ((user_name != NULL && user == NULL) ||
         (group_name != NULL && group == NULL)) {
+        g_free(group_name);
+        g_free(user_name);
         g_ptr_array_unref(memberships);
         return send_error(output, USER_DATABASE ".NoRecordFound", error);
     }
 
     if (user != NULL && group != NULL) {
-        if (user_is_member(user, group))
+        if (user_is_member(user->pw_name, user->pw_gid, group->gr_gid))
             add_membership(memberships, user->pw_name, group->gr_name);
     } else if (user != NULL) {
-        int count = 16;
-        gid_t *groups = g_new(gid_t, count);
+        gchar *resolved_user = g_strdup(user->pw_name);
+        gid_t primary_gid = user->pw_gid;
+        GArray *groups = get_user_groups(resolved_user, primary_gid);
 
-        if (getgrouplist(user->pw_name, user->pw_gid, groups, &count) < 0 &&
-            count > 0) {
-            groups = g_renew(gid_t, groups, count);
-            if (getgrouplist(user->pw_name, user->pw_gid, groups, &count) < 0)
-                count = 0;
+        for (guint i = 0; i < groups->len; i++) {
+            gid_t gid = g_array_index(groups, gid_t, i);
+            struct group *entry = getgrgid(gid);
+            if (entry != NULL) {
+                gchar *resolved_group = g_strdup(entry->gr_name);
+                add_membership(memberships, resolved_user, resolved_group);
+                g_free(resolved_group);
+            }
         }
-
-        for (int i = 0; i < count; i++) {
-            struct group *entry = getgrgid(groups[i]);
-
-            if (entry != NULL)
-                add_membership(memberships, user->pw_name, entry->gr_name);
-        }
-
-        g_free(groups);
+        g_array_unref(groups);
+        g_free(resolved_user);
     } else {
+        GPtrArray *users = g_ptr_array_new_with_free_func(user_identity_free);
+        gid_t target_gid = group->gr_gid;
+        gchar *target_group = g_strdup(group->gr_name);
+
         setpwent();
         while ((user = getpwent()) != NULL) {
-            if (user_is_member(user, group))
-                add_membership(memberships, user->pw_name, group->gr_name);
+            UserIdentity *identity = g_new0(UserIdentity, 1);
+            identity->name = g_strdup(user->pw_name);
+            identity->primary_gid = user->pw_gid;
+            g_ptr_array_add(users, identity);
         }
         endpwent();
+
+        for (guint i = 0; i < users->len; i++) {
+            UserIdentity *identity = g_ptr_array_index(users, i);
+            if (user_is_member(identity->name, identity->primary_gid,
+                               target_gid))
+                add_membership(memberships, identity->name, target_group);
+        }
+        g_free(target_group);
+        g_ptr_array_unref(users);
     }
 
     success = send_memberships(memberships, output, allow_multiple, error);
     g_ptr_array_unref(memberships);
+    g_free(group_name);
+    g_free(user_name);
     return success;
 }
 
