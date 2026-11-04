@@ -456,8 +456,16 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
     }
 
     if (user != NULL && group != NULL) {
-        if (user_is_member(user->pw_name, user->pw_gid, group->gr_gid))
-            add_membership(memberships, user->pw_name, group->gr_name);
+        gchar *resolved_user = g_strdup(user->pw_name);
+        gid_t primary_gid = user->pw_gid;
+        gid_t target_gid = group->gr_gid;
+        gchar *resolved_group = g_strdup(group->gr_name);
+
+        if (user_is_member(resolved_user, primary_gid, target_gid))
+            add_membership(memberships, resolved_user, resolved_group);
+
+        g_free(resolved_group);
+        g_free(resolved_user);
     } else if (user != NULL) {
         gchar *resolved_user = g_strdup(user->pw_name);
         gid_t primary_gid = user->pw_gid;
