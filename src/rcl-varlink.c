@@ -482,9 +482,9 @@ dispatch_request(GOutputStream *output, const gchar *data, GError **error)
         g_str_equal(method, USER_DATABASE ".GetMemberships")) {
         if (service == NULL || !g_str_equal(service, VARLINK_SERVICE)) {
             success = send_error(output, USER_DATABASE ".BadService", error);
+        } else if (!rcl_nss_lock_timeout(1000)) {
+            success = send_error(output, USER_DATABASE ".ServiceNotAvailable", error);
         } else {
-            rcl_nss_lock();
-
             if (g_str_equal(method, USER_DATABASE ".GetUserRecord"))
                 success = user_lookup(parameters, output, error);
             else if (g_str_equal(method, USER_DATABASE ".GetGroupRecord"))
