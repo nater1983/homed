@@ -185,7 +185,11 @@ static GVariant *home_get_property(GDBusConnection *c,const gchar *s,const gchar
 static void method_call(GDBusConnection *conn, const gchar *sender,
  const gchar *obj, const gchar *iface, const gchar *method, GVariant *params,
  GDBusMethodInvocation *inv, gpointer data) {
-    rcl_nss_lock();
+    if (!rcl_nss_lock_timeout(1000)) {
+        g_dbus_method_invocation_return_error(inv, G_DBUS_ERROR,
+            G_DBUS_ERROR_FAILED, "NSS is busy; retry the request");
+        return;
+    }
     method_call_unlocked(conn, sender, obj, iface, method, params, inv, data);
     rcl_nss_unlock();
 }
