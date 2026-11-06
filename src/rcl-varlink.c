@@ -594,32 +594,36 @@ serve_connection(gpointer data)
     GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
     GByteArray *request = g_byte_array_new();
     guint8 byte;
-    gboolean terminated = FALSE;
     GError *error = NULL;
 
-    while (request->len < MAX_REQUEST_SIZE) {
+    for (;;) {
         gssize bytes_read = g_input_stream_read(input, &byte, 1, NULL, &error);
 
         if (bytes_read <= 0)
             break;
 
         if (byte == '\0') {
-            terminated = TRUE;
+            const guint8 terminator = 0;
+
+            g_byte_array_append(request, &terminator, 1);
+
+            if (!dispatch_request(output, (const gchar *) request->data,
+                                  &error) || error != NULL)
+                break;
+
+            /* Varlink permits multiple NUL-terminated calls per connection. */
+            g_byte_array_set_size(request, 0);
+            continue;
+        }
+
+        if (request->len >= MAX_REQUEST_SIZE) {
+            g_set_error_literal(&error, G_IO_ERROR,
+                                G_IO_ERROR_MESSAGE_TOO_LARGE,
+                                "Varlink request exceeds the size limit");
             break;
         }
 
         g_byte_array_append(request, &byte, 1);
-    }
-
-    if (error == NULL && terminated && request->len > 0 &&
-        request->len < MAX_REQUEST_SIZE) {
-        const guint8 terminator = 0;
-
-        g_byte_array_append(request, &terminator, 1);
-        dispatch_request(output, (const gchar *) request->data, &error);
-    } else if (error == NULL && request->len >= MAX_REQUEST_SIZE) {
-        g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_MESSAGE_TOO_LARGE,
-                            "Varlink request exceeds the size limit");
     }
 
     if (error != NULL) {
