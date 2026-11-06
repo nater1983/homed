@@ -4,13 +4,13 @@ cd "$(dirname "$0")"; CWD=$(pwd)
 PRGNAM=homed
 VERSION=${VERSION:-0.3.3}
 BUILD=${BUILD:-1}
-TAG=${TAG:-_rdlnx}
+TAG=${TAG:-rdlnx}
 PKGTYPE=${PKGTYPE:-txz}
 if [ -z "${ARCH:-}" ]; then
   case "$(uname -m)" in i?86) ARCH=i586 ;; arm*) ARCH=arm ;; *) ARCH=$(uname -m) ;; esac
 fi
 if [ -n "${PRINT_PACKAGE_NAME:-}" ]; then echo "$PRGNAM-$VERSION-$ARCH-$BUILD$TAG.$PKGTYPE"; exit 0; fi
-TMP=${TMP:-/tmp}
+TMP=${TMP:-/tmp/rdlnx}
 PKG=$TMP/package-$PRGNAM
 OUTPUT=${OUTPUT:-/tmp}
 case "$ARCH" in
