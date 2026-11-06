@@ -2,6 +2,7 @@
 #include "rcl-nss.h"
 #include <pwd.h>
 #include <stdio.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #define OBJECT_PATH "/org/freedesktop/home1"
@@ -41,6 +42,20 @@ static const gchar xml[] =
 
 static gchar *home_object_path(uid_t uid) { return g_strdup_printf("/org/freedesktop/home1/home/_%u", (guint) uid); }
 static const gchar *pw_shell(const struct passwd *pw) { return (pw->pw_shell && *pw->pw_shell) ? pw->pw_shell : "/bin/sh"; }
+static const gchar *home_state(const gchar *home_directory) {
+    struct stat st;
+
+    if (!home_directory || !*home_directory)
+        return "inactive";
+
+    if (stat(home_directory, &st) != 0 || !S_ISDIR(st.st_mode))
+        return "inactive";
+
+    if (access(home_directory, R_OK | X_OK) != 0)
+        return "inactive";
+
+    return "active";
+}
 static void home_entry_free(gpointer data) {
     HomeEntry *h = data; if (!h) return;
     g_free(h->name); g_free(h->real_name); g_free(h->home_directory); g_free(h->shell); g_free(h->path); g_free(h);
@@ -66,13 +81,14 @@ static gboolean register_home_entry(RclHome *self, const struct passwd *pw, GErr
 static void return_home(GDBusMethodInvocation *inv, const struct passwd *pw, gboolean by_name) {
     gchar *path = home_object_path(pw->pw_uid);
     const gchar *gecos = pw->pw_gecos ? pw->pw_gecos : "";
+    const gchar *state = home_state(pw->pw_dir);
     if (by_name)
         g_dbus_method_invocation_return_value(inv, g_variant_new("(usussso)",
-            (guint32)pw->pw_uid, "inactive", (guint32)pw->pw_gid, gecos,
+            (guint32)pw->pw_uid, state, (guint32)pw->pw_gid, gecos,
             pw->pw_dir ? pw->pw_dir : "", pw_shell(pw), path));
     else
         g_dbus_method_invocation_return_value(inv, g_variant_new("(ssussso)",
-            pw->pw_name ? pw->pw_name : "", "inactive", (guint32)pw->pw_gid,
+            pw->pw_name ? pw->pw_name : "", state, (guint32)pw->pw_gid,
             gecos, pw->pw_dir ? pw->pw_dir : "", pw_shell(pw), path));
     g_free(path);
 }
@@ -146,7 +162,7 @@ static void method_call_unlocked(GDBusConnection *conn, const gchar *sender, con
                 g_dbus_method_invocation_return_gerror(inv,e); g_clear_error(&e); return;
             }
             g_variant_builder_add(&b,"(susussso)",pw->pw_name ? pw->pw_name : "",
-                (guint32)pw->pw_uid,"inactive",(guint32)pw->pw_gid,pw->pw_gecos ? pw->pw_gecos : "",
+                (guint32)pw->pw_uid,home_state(pw->pw_dir),(guint32)pw->pw_gid,pw->pw_gecos ? pw->pw_gecos : "",
                 pw->pw_dir ? pw->pw_dir : "",pw_shell(pw),path);
             g_free(path);
         }
@@ -178,7 +194,7 @@ static GVariant *home_get_property(GDBusConnection *c,const gchar *s,const gchar
     if (g_str_equal(p,"RealName")) return g_variant_new_string(h->real_name);
     if (g_str_equal(p,"HomeDirectory")) return g_variant_new_string(h->home_directory);
     if (g_str_equal(p,"Shell")) return g_variant_new_string(h->shell);
-    if (g_str_equal(p,"State")) return g_variant_new_string("inactive");
+    if (g_str_equal(p,"State")) return g_variant_new_string(home_state(h->home_directory));
     if (g_str_equal(p,"Service")) return g_variant_new_string("nss");
     return NULL;
 }
