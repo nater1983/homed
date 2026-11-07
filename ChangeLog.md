@@ -2,6 +2,9 @@
 
 ## 0.4.0
 
+- Hardened NSS membership lookups by snapshotting the resolved passwd identity before subsequent group lookups, avoiding reliance on NSS-owned record storage across calls.
+- Added regression coverage for combined user-and-group membership requests.
+
 - Added the `varlink-vendor` Meson option to configure the vendor reported by `org.varlink.service.GetInfo`.
 
 - Report NSS home-directory availability through the per-home State property and GetHomeByName, GetHomeByUID, and ListHomes; document that this does not represent managed-home activation.
