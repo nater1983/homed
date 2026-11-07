@@ -1,5 +1,12 @@
 # ChangeLog
 
+## 0.3.4 (2026-11-07)
+
+- Backported bounded NSS mutex acquisition from 0.4.0. D-Bus and Varlink requests now return an error when the shared NSS lock cannot be acquired within one second, instead of waiting indefinitely.
+- Corrected supplementary-group membership handling in Varlink GetMemberships by consistently using getgrouplist() for user, group, and combined lookups.
+- Backported persistent Varlink connections, allowing multiple NUL-terminated requests on a single connection while retaining the per-request size limit.
+- Improved NSS-backed home-directory availability reporting. GetHomeByName, GetHomeByUID, ListHomes, and the per-home State property now distinguish available home directories from unavailable ones.
+
 ## 0.3.3
 
 - Backported D-Bus Properties security hardening from 0.4.0, restricting default users to Get and GetAll and preventing property writes.
