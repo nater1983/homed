@@ -442,8 +442,17 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
                           error);
     }
 
-    if (user_name != NULL)
+    /* NSS may reuse static lookup storage. Snapshot the passwd identity
+     * before looking up a group or performing another NSS operation. */
+    gchar *resolved_user_name = NULL;
+    gid_t resolved_primary_gid = 0;
+    if (user_name != NULL) {
         user = getpwnam(user_name);
+        if (user != NULL) {
+            resolved_user_name = g_strdup(user->pw_name);
+            resolved_primary_gid = user->pw_gid;
+        }
+    }
     if (group_name != NULL)
         group = getgrnam(group_name);
 
@@ -451,13 +460,14 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
         (group_name != NULL && group == NULL)) {
         g_free(group_name);
         g_free(user_name);
+        g_free(resolved_user_name);
         g_ptr_array_unref(memberships);
         return send_error(output, USER_DATABASE ".NoRecordFound", error);
     }
 
     if (user != NULL && group != NULL) {
-        gchar *resolved_user = g_strdup(user->pw_name);
-        gid_t primary_gid = user->pw_gid;
+        const gchar *resolved_user = resolved_user_name;
+        gid_t primary_gid = resolved_primary_gid;
         gid_t target_gid = group->gr_gid;
         gchar *resolved_group = g_strdup(group->gr_name);
 
@@ -465,10 +475,9 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
             add_membership(memberships, resolved_user, resolved_group);
 
         g_free(resolved_group);
-        g_free(resolved_user);
     } else if (user != NULL) {
-        gchar *resolved_user = g_strdup(user->pw_name);
-        gid_t primary_gid = user->pw_gid;
+        const gchar *resolved_user = resolved_user_name;
+        gid_t primary_gid = resolved_primary_gid;
         GArray *groups = get_user_groups(resolved_user, primary_gid);
 
         for (guint i = 0; i < groups->len; i++) {
@@ -481,7 +490,6 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
             }
         }
         g_array_unref(groups);
-        g_free(resolved_user);
     } else {
         GPtrArray *users = g_ptr_array_new_with_free_func(user_identity_free);
         gid_t target_gid = group->gr_gid;
@@ -510,6 +518,7 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
     g_ptr_array_unref(memberships);
     g_free(group_name);
     g_free(user_name);
+    g_free(resolved_user_name);
     return success;
 }
 
