@@ -2,7 +2,7 @@
 # SlackBuild modeled on nater1983/hostnamed main.
 cd "$(dirname "$0")"; CWD=$(pwd)
 PRGNAM=homed
-VERSION=${VERSION:-0.3.3}
+VERSION=${VERSION:-0.3.4}
 BUILD=${BUILD:-1}
 TAG=${TAG:-rdlnx}
 PKGTYPE=${PKGTYPE:-txz}
