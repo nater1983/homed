@@ -355,6 +355,29 @@ test_membership_consistency(Fixture *unused, gconstpointer data)
 }
 
 static void
+test_combined_membership_identity(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    GSocketConnection *connection = connect_socket();
+    GPtrArray *replies = exchange_memberships(connection,
+        "\"service\":\"io.systemd.Home\",\"userName\":\"root\",\"groupName\":\"root\"");
+
+    g_assert_cmpuint(replies->len, ==, 1);
+    JsonParser *parser = json_parser_new();
+    g_assert_true(json_parser_load_from_data(parser,
+        g_ptr_array_index(replies, 0), -1, NULL));
+    JsonObject *response = json_node_get_object(json_parser_get_root(parser));
+    JsonObject *parameters = json_object_get_object_member(response, "parameters");
+    g_assert_cmpstr(json_object_get_string_member(parameters, "userName"), ==, "root");
+    g_assert_cmpstr(json_object_get_string_member(parameters, "groupName"), ==, "root");
+
+    g_object_unref(parser);
+    g_ptr_array_unref(replies);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
+static void
 test_nss_lock_contention(Fixture *unused, gconstpointer data)
 {
     (void) unused; (void) data;
@@ -595,6 +618,8 @@ main(int argc, char **argv)
                test_conflicting_user_identity, teardown);
     g_test_add("/varlink/membership-consistency", Fixture, NULL, setup,
                test_membership_consistency, teardown);
+    g_test_add("/varlink/combined-membership-identity", Fixture, NULL, setup,
+               test_combined_membership_identity, teardown);
     g_test_add("/varlink/listener-restart", Fixture, NULL, setup,
                test_listener_restart, teardown);
     g_test_add("/varlink/nss-lock-contention", Fixture, NULL, setup,
