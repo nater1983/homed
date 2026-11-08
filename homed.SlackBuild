@@ -20,8 +20,15 @@ case "$ARCH" in
   *) SLKCFLAGS='-O2'; LIBDIRSUFFIX='' ;;
 esac
 set -e
-rm -rf "$PKG"
-mkdir -p "$PKG" "$OUTPUT"
+rm -rf $PRGNAM-$VERSION
+tar xvf $CWD/$PRGNAM-$VERSION.tar.?z || exit 1
+cd $PRGNAM-$VERSION || exit 1
+chown -R root:root .
+find . -type f \( -perm -4000 -o -perm -2000 \) -exec chmod -s {} +
+find . ! -type l -type d ! -perm 755 -exec chmod -f 755 {} +
+find . ! -type l -type f -perm /111 ! -perm 755 -exec chmod -f 755 {} +
+find . ! -type l -type f ! -perm /111 ! -perm 644 -exec chmod -f 644 {} +
+
 export CFLAGS="$SLKCFLAGS"
 meson setup build --prefix=/usr --libdir="lib${LIBDIRSUFFIX}" --libexecdir=/usr/libexec --bindir=/usr/bin --sbindir=/usr/sbin --datadir=/usr/share --sysconfdir=/etc --localstatedir=/var --mandir=/usr/man --buildtype=release -Dtests=true -Dprivileged-group=wheel
 ninja -C build
