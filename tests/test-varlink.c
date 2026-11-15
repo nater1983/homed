@@ -378,6 +378,43 @@ test_combined_membership_identity(Fixture *unused, gconstpointer data)
 }
 
 static void
+test_membership_nss_failures(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    static const gchar *filters[] = {
+        "\"userName\":\"root\"",
+        "\"userName\":\"root\",\"groupName\":\"root\"",
+        "\"groupName\":\"root\""
+    };
+
+    rcl_varlink_test_fail_group_list(TRUE);
+    for (guint i = 0; i < G_N_ELEMENTS(filters); i++) {
+        GSocketConnection *connection = connect_socket();
+        gchar *request = g_strdup_printf(
+            "{\"method\":\"io.systemd.UserDatabase.GetMemberships\","
+            "\"parameters\":{\"service\":\"io.systemd.Home\",%s}}", filters[i]);
+        gchar *reply = exchange(connection, request);
+        assert_reply_contains(reply, "io.systemd.UserDatabase.ServiceNotAvailable");
+        g_free(reply);
+        g_free(request);
+        g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+        g_object_unref(connection);
+    }
+    rcl_varlink_test_fail_group_list(FALSE);
+
+    GSocketConnection *connection = connect_socket();
+    gchar *reply = exchange(connection,
+        "{\"method\":\"io.systemd.UserDatabase.GetMemberships\","
+        "\"parameters\":{\"service\":\"io.systemd.Home\","
+        "\"userName\":\"root\",\"groupName\":\"root\"}}");
+    assert_reply_contains(reply, "\"userName\":\"root\"");
+    assert_reply_contains(reply, "\"groupName\":\"root\"");
+    g_free(reply);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
+static void
 test_nss_lock_contention(Fixture *unused, gconstpointer data)
 {
     (void) unused; (void) data;
@@ -622,6 +659,8 @@ main(int argc, char **argv)
                test_combined_membership_identity, teardown);
     g_test_add("/varlink/listener-restart", Fixture, NULL, setup,
                test_listener_restart, teardown);
+    g_test_add("/varlink/membership-nss-failures", Fixture, NULL, setup,
+               test_membership_nss_failures, teardown);
     g_test_add("/varlink/nss-lock-contention", Fixture, NULL, setup,
                test_nss_lock_contention, teardown);
     g_test_add("/varlink/nss-provider-recursion", Fixture, NULL, setup,
