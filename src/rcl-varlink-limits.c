@@ -31,6 +31,34 @@ rcl_varlink_limits_free(RclVarlinkLimits *limits)
     g_free(limits);
 }
 
+static gboolean
+acquire_uid(RclVarlinkLimits *limits, uid_t uid)
+{
+    gpointer key = GUINT_TO_POINTER((guint) uid);
+    guint count;
+    gboolean accepted = FALSE;
+
+    g_mutex_lock(&limits->mutex);
+    count = GPOINTER_TO_UINT(g_hash_table_lookup(limits->per_uid, key));
+    if (limits->active < RCL_VARLINK_GLOBAL_LIMIT &&
+        limits->active < RCL_VARLINK_WORKER_LIMIT &&
+        count < RCL_VARLINK_PER_UID_LIMIT) {
+        g_hash_table_insert(limits->per_uid, key, GUINT_TO_POINTER(count + 1));
+        limits->active++;
+        accepted = TRUE;
+    }
+    g_mutex_unlock(&limits->mutex);
+    return accepted;
+}
+
+#ifdef HOMED_TESTING
+gboolean
+rcl_varlink_limits_acquire_uid_for_test(RclVarlinkLimits *limits, uid_t uid)
+{
+    return acquire_uid(limits, uid);
+}
+#endif
+
 gboolean
 rcl_varlink_limits_acquire(RclVarlinkLimits *limits,
                            GSocketConnection *connection, uid_t *uid_out)
@@ -39,9 +67,6 @@ rcl_varlink_limits_acquire(RclVarlinkLimits *limits,
     GCredentials *credentials;
     GError *error = NULL;
     uid_t uid;
-    gpointer key;
-    guint count;
-    gboolean accepted = FALSE;
 
     g_return_val_if_fail(limits != NULL, FALSE);
     g_return_val_if_fail(G_IS_SOCKET_CONNECTION(connection), FALSE);
@@ -60,21 +85,11 @@ rcl_varlink_limits_acquire(RclVarlinkLimits *limits,
         return FALSE;
     }
 
-    /* UID 0 must be representable, so store counters as count+1. */
-    key = GUINT_TO_POINTER((guint) uid);
-    g_mutex_lock(&limits->mutex);
-    count = GPOINTER_TO_UINT(g_hash_table_lookup(limits->per_uid, key));
-    if (limits->active < RCL_VARLINK_GLOBAL_LIMIT &&
-        limits->active < RCL_VARLINK_WORKER_LIMIT &&
-        count < RCL_VARLINK_PER_UID_LIMIT) {
-        g_hash_table_insert(limits->per_uid, key, GUINT_TO_POINTER(count + 1));
-        limits->active++;
-        accepted = TRUE;
-        if (uid_out != NULL)
-            *uid_out = uid;
-    }
-    g_mutex_unlock(&limits->mutex);
-    return accepted;
+    if (!acquire_uid(limits, uid))
+        return FALSE;
+    if (uid_out != NULL)
+        *uid_out = uid;
+    return TRUE;
 }
 
 void

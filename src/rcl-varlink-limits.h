@@ -5,7 +5,9 @@
 
 /* Compatibility ceilings; threads have a separate, smaller cap. */
 #define RCL_VARLINK_GLOBAL_LIMIT 4096U
+#ifndef RCL_VARLINK_PER_UID_LIMIT
 #define RCL_VARLINK_PER_UID_LIMIT 128U
+#endif
 #define RCL_VARLINK_WORKER_LIMIT 128U
 
 typedef struct _RclVarlinkLimits RclVarlinkLimits;
@@ -19,3 +21,8 @@ gboolean rcl_varlink_limits_acquire(RclVarlinkLimits *limits,
                                     GSocketConnection *connection,
                                     uid_t *uid_out);
 void rcl_varlink_limits_release(RclVarlinkLimits *limits, uid_t uid);
+
+#ifdef HOMED_TESTING
+gboolean rcl_varlink_limits_acquire_uid_for_test(RclVarlinkLimits *limits,
+                                                 uid_t uid);
+#endif

@@ -19,6 +19,15 @@ test_varlink = executable('test-varlink',
 
 test('varlink-integration', test_varlink, timeout: 60)
 
+test_varlink_limits = executable('test-varlink-limits',
+  'test-varlink-limits.c',
+  '../src/rcl-varlink-limits.c',
+  dependencies: [glib_dep, gio_dep],
+  include_directories: include_directories('../src'),
+  c_args: ['-DHOMED_TESTING', '-DRCL_VARLINK_PER_UID_LIMIT=2'])
+
+test('varlink-limits', test_varlink_limits)
+
 test_dbus = executable('test-dbus',
   'test-dbus.c',
   '../src/rcl-home.c',
