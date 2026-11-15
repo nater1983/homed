@@ -3,14 +3,54 @@ project(
   version: '0.4.beta',
   license: 'GPL-2.0-or-later',
   meson_version: '>= 0.58.0',
-  default_options: ['c_std=gnu11', 'warning_level=2', 'werror=false'],
+  default_options: [
+    'c_std=gnu11',
+    'warning_level=2',
+    'werror=false',
+    'optimization=2',
+  ],
 )
 
 cc = meson.get_compiler('c')
-add_project_arguments(cc.get_supported_arguments([
+extra_c_args = cc.get_supported_arguments([
   '-Wno-unused-parameter', '-Wno-missing-field-initializers',
-  '-fstack-protector-strong', '-D_FORTIFY_SOURCE=2',
-]), language: 'c')
+  '-fstack-protector-strong',
+])
+
+# Enable fortified libc functions only when optimization is active.
+optimized_src = '''
+  #if !defined(__OPTIMIZE__) || __OPTIMIZE__ == 0
+  #error Optimization is disabled
+  #endif
+'''
+
+# Meson disables optimization in compiler checks. Match the target flags,
+# including optimization overrides supplied through CFLAGS or c_args.
+optimization = get_option('optimization')
+optimization_args = []
+if optimization != 'plain'
+  optimization_args += ['-O' + optimization]
+endif
+foreach arg : get_option('c_args')
+  if arg.startswith('-O')
+    optimization_args += [arg]
+  endif
+endforeach
+
+if cc.compiles(optimized_src, args: optimization_args, name: 'compiler optimization enabled')
+  extra_c_args += cc.get_supported_arguments(['-D_FORTIFY_SOURCE=2'])
+endif
+
+if get_option('buildtype').contains('debug')
+  extra_c_args += cc.get_supported_arguments([
+    '-Wcast-align',
+    '-Wmissing-declarations',
+    '-Wmissing-prototypes',
+    '-Wnested-externs',
+  ])
+endif
+
+add_project_arguments(extra_c_args, language: 'c')
 
 glib_req = '>= 2.56'
 glib_dep = dependency('glib-2.0', version: glib_req)
