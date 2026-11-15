@@ -765,10 +765,37 @@ test_disconnect_recovery(Fixture *unused, gconstpointer data)
     g_object_unref(connection);
 }
 
+
+static void
+test_shutdown_active_connection(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    GSocketConnection *connection = connect_socket();
+    GInputStream *input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
+    GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
+    GError *error = NULL;
+    const gchar *partial = "{";
+    g_assert_true(g_output_stream_write_all(output, partial, 1,
+                                            NULL, NULL, &error));
+    g_assert_no_error(error);
+
+    /* The listener must close the idle worker and return without hanging. */
+    rcl_varlink_stop(fixture.service);
+    fixture.service = NULL;
+    guint8 byte;
+    gssize count = g_input_stream_read(input, &byte, 1, NULL, &error);
+    g_assert_no_error(error);
+    g_assert_cmpint(count, ==, 0);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
 int
 main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
+    g_test_add("/varlink/shutdown-active-connection", Fixture, NULL, setup,
+               test_shutdown_active_connection, teardown);
     g_test_add("/varlink/disconnect-recovery", Fixture, NULL, setup,
                test_disconnect_recovery, teardown);
     g_test_add("/varlink/oversized-frame", Fixture, NULL, setup,
