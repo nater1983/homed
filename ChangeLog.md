@@ -2,6 +2,8 @@
 
 ## 0.4.0 — Development (Phase 7)
 
+- Track Varlink worker connections and drain active workers when stopping the listener; add a shutdown regression test with an accepted, partially written request (pending Slackware verification).
+
 - Add a regression test for repeated client disconnects with incomplete frames followed by a successful Varlink request; worker shutdown coordination remains under review.
 
 - Add Varlink regression tests for oversized request frames and EOF on incomplete frames, checking protocol error/connection closure and preventing partial request dispatch.
