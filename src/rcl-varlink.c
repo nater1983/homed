@@ -669,10 +669,33 @@ out:
     return success;
 }
 
+typedef struct {
+    GMutex mutex;
+    GCond drained;
+    GList *connections; /* Owned references, protected by mutex. */
+    gboolean stopping;
+} VarlinkWorkers;
+
+typedef struct {
+    VarlinkWorkers *workers;
+    GSocketConnection *connection;
+} VarlinkWorker;
+
+static void
+varlink_workers_free(gpointer data)
+{
+    VarlinkWorkers *workers = data;
+    g_assert(workers->connections == NULL);
+    g_cond_clear(&workers->drained);
+    g_mutex_clear(&workers->mutex);
+    g_free(workers);
+}
+
 static gpointer
 serve_connection(gpointer data)
 {
-    GSocketConnection *connection = data;
+    VarlinkWorker *worker = data;
+    GSocketConnection *connection = worker->connection;
     GInputStream *input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
     GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
     GByteArray *request = g_byte_array_new();
@@ -725,8 +748,16 @@ serve_connection(gpointer data)
 
     g_byte_array_unref(request);
     g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-    g_object_unref(connection);
 
+    g_mutex_lock(&worker->workers->mutex);
+    worker->workers->connections =
+        g_list_remove(worker->workers->connections, connection);
+    if (worker->workers->connections == NULL)
+        g_cond_signal(&worker->workers->drained);
+    g_mutex_unlock(&worker->workers->mutex);
+
+    g_object_unref(connection);
+    g_free(worker);
     return NULL;
 }
 
@@ -734,15 +765,27 @@ static gboolean
 incoming_connection(GSocketService *service, GSocketConnection *connection,
                     GObject *source_object, gpointer user_data)
 {
+    VarlinkWorkers *workers = user_data;
+    VarlinkWorker *worker;
     GThread *thread;
 
     (void) service;
     (void) source_object;
-    (void) user_data;
 
-    thread = g_thread_new("homed-varlink", serve_connection,
-                          g_object_ref(connection));
+    g_mutex_lock(&workers->mutex);
+    if (workers->stopping) {
+        g_mutex_unlock(&workers->mutex);
+        return FALSE;
+    }
+
+    worker = g_new0(VarlinkWorker, 1);
+    worker->workers = workers;
+    worker->connection = g_object_ref(connection);
+    workers->connections = g_list_prepend(workers->connections,
+                                          worker->connection);
+    thread = g_thread_new("homed-varlink", serve_connection, worker);
     g_thread_unref(thread);
+    g_mutex_unlock(&workers->mutex);
 
     return TRUE;
 }
@@ -755,6 +798,7 @@ rcl_varlink_start_at(const gchar *directory, const gchar *socket_path,
     GSocketService *service;
     GSocketAddress *address;
     GSocketAddress *effective_address = NULL;
+    VarlinkWorkers *workers;
 
     if (g_mkdir_with_parents(directory, 0755) < 0) {
         g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
@@ -826,8 +870,13 @@ rcl_varlink_start_at(const gchar *directory, const gchar *socket_path,
         return NULL;
     }
 
+    workers = g_new0(VarlinkWorkers, 1);
+    g_mutex_init(&workers->mutex);
+    g_cond_init(&workers->drained);
+    g_object_set_data_full(G_OBJECT(service), "homed-varlink-workers",
+                           workers, varlink_workers_free);
     g_signal_connect(service, "incoming", G_CALLBACK(incoming_connection),
-                     NULL);
+                     workers);
     g_socket_service_start(service);
     g_object_set_data_full(G_OBJECT(service), "homed-varlink-socket-path",
                            g_strdup(socket_path), g_free);
@@ -849,8 +898,26 @@ rcl_varlink_stop(GSocketService *service)
         : NULL;
 
     if (service != NULL) {
+        VarlinkWorkers *workers =
+            g_object_get_data(G_OBJECT(service), "homed-varlink-workers");
+
         g_socket_service_stop(service);
         g_socket_listener_close(G_SOCKET_LISTENER(service));
+
+        /* Unblock idle readers and wait until every connection worker has
+         * released its reference before destroying the shared state. */
+        g_mutex_lock(&workers->mutex);
+        workers->stopping = TRUE;
+        for (GList *item = workers->connections; item != NULL;
+             item = item->next) {
+            GSocket *socket =
+                g_socket_connection_get_socket(item->data);
+            g_socket_shutdown(socket, TRUE, TRUE, NULL);
+        }
+        while (workers->connections != NULL)
+            g_cond_wait(&workers->drained, &workers->mutex);
+        g_mutex_unlock(&workers->mutex);
+
         if (socket_path != NULL)
             g_unlink(socket_path);
         g_object_unref(service);
