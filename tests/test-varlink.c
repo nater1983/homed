@@ -670,8 +670,8 @@ test_empty_frame(Fixture *unused, gconstpointer data)
     gchar *reply = read_reply(input);
     g_assert_nonnull(strstr(reply, "org.varlink.service.InvalidParameter"));
     g_free(reply);
-    reply = exchange(connection, "{\\"method\\":\\"org.varlink.service.GetInfo\\",\\"parameters\\":{}}");
-    g_assert_nonnull(strstr(reply, "\\"product\\":\\"homed\\""));
+    reply = exchange(connection, "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{}}");
+    g_assert_nonnull(strstr(reply, "\"product\":\"homed\""));
     g_free(reply);
     g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
     g_object_unref(connection);
