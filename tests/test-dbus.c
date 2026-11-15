@@ -173,6 +173,12 @@ setup(Fixture *fixture, gconstpointer data)
     g_cond_init(&fixture->cond);
     g_mutex_init(&fixture->varlink_mutex);
     g_cond_init(&fixture->varlink_cond);
+
+    /* GTestDBus forks a watcher on first use. Start it before either fixture
+     * thread so it cannot inherit their live allocations. */
+    fixture->bus = g_test_dbus_new(G_TEST_DBUS_NONE);
+    g_test_dbus_up(fixture->bus);
+
     fixture->varlink_thread = g_thread_new("homed-varlink-test",
         varlink_service_thread, fixture);
     g_mutex_lock(&fixture->varlink_mutex);
@@ -180,8 +186,6 @@ setup(Fixture *fixture, gconstpointer data)
         g_cond_wait(&fixture->varlink_cond, &fixture->varlink_mutex);
     g_mutex_unlock(&fixture->varlink_mutex);
     g_assert_no_error(fixture->varlink_error);
-    fixture->bus = g_test_dbus_new(G_TEST_DBUS_NONE);
-    g_test_dbus_up(fixture->bus);
     fixture->thread = g_thread_new("homed-dbus-test",
                                    service_thread, fixture);
 
@@ -208,11 +212,11 @@ teardown(Fixture *fixture, gconstpointer data)
     g_clear_object(&fixture->client);
     g_main_context_invoke(fixture->context, quit_service, fixture);
     g_thread_join(fixture->thread);
+    g_main_context_invoke(fixture->varlink_context, quit_varlink, fixture);
+    g_thread_join(fixture->varlink_thread);
     g_test_dbus_down(fixture->bus);
     g_object_unref(fixture->bus);
     g_clear_error(&fixture->startup_error);
-    g_main_context_invoke(fixture->varlink_context, quit_varlink, fixture);
-    g_thread_join(fixture->varlink_thread);
     g_free(fixture->varlink_directory);
     g_free(fixture->varlink_socket);
     g_clear_error(&fixture->varlink_error);

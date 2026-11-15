@@ -219,6 +219,7 @@ test_conflicting_group_identity(Fixture *unused, gconstpointer data)
     assert_reply_contains(reply, "io.systemd.UserDatabase.ConflictingRecordFound");
     g_free(reply);
     g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
 }
 
 
