@@ -815,8 +815,8 @@ test_worker_limit_recovery(Fixture *unused, gconstpointer data)
         gchar *reply;
         held[i] = connect_socket();
         reply = exchange(held[i],
-            "{\\"method\\":\\"org.varlink.service.GetInfo\\",\\"parameters\\":{}}");
-        assert_reply_contains(reply, "\\"product\\":\\"homed\\"");
+            "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{}}");
+        assert_reply_contains(reply, "\"product\":\"homed\"");
         g_free(reply);
     }
 
@@ -841,8 +841,8 @@ test_worker_limit_recovery(Fixture *unused, gconstpointer data)
     {
         GSocketConnection *recovered = connect_socket();
         gchar *reply = exchange(recovered,
-            "{\\"method\\":\\"org.varlink.service.GetInfo\\",\\"parameters\\":{}}");
-        assert_reply_contains(reply, "\\"product\\":\\"homed\\"");
+            "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{}}");
+        assert_reply_contains(reply, "\"product\":\"homed\"");
         g_free(reply);
         g_io_stream_close(G_IO_STREAM(recovered), NULL, NULL);
         g_object_unref(recovered);
