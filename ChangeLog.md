@@ -2,34 +2,26 @@
 
 ## 0.4.beta — 2026-11-15
 
-Beta prerelease covering development phases 1–6. D-Bus and Varlink compatibility, NSS-backed account and group lookups, home availability reporting, concurrency protections, and NSS failure handling have passed the Slackware test suite (3/3 Meson suites; 33 individual tests). Phases 7–12 remain for the final 0.4.0 release.
+Beta prerelease following the 0.4.alpha development baseline. Slackware validation: 3/3 Meson suites and 33/33 individual tests passed. This is a prerelease; protocol hardening, security review, runtime integration, packaging review, and final release verification remain planned for 0.4.0.
 
+- Fixed NSS supplementary-group lookup failures being mistaken for missing memberships across user-only, combined user/group, and group-only Varlink filters; report `ServiceNotAvailable` on failure.
+- Added test-only supplementary-group failure injection, regression tests for all three filter modes, and a recovery check.
+- Bounded `getgrouplist()` retries and group-count allocation, and removed duplicate supplementary group IDs from successful results.
+- Snapshotted resolved passwd identity before subsequent NSS group lookups, with a combined-filter regression test.
+- Added configurable `varlink-vendor` Meson option for Varlink service metadata.
 
-- Propagated supplementary-group NSS failures as `ServiceNotAvailable` in user, combined user/group, and group-filtered membership queries rather than silently reporting missing memberships.
-- Added test-only NSS group lookup failure injection and integration regression coverage for all three membership filter modes, including recovery after the simulated failure.
+## 0.4.alpha — Development baseline (date not verified)
 
-- Bounded `getgrouplist()` buffer-growth retries and distinguished NSS supplementary-group lookup failures from successful empty results in user membership queries.
+Initial 0.4 development work, prior to the beta NSS error-handling fixes:
 
-- Hardened NSS membership lookups by snapshotting the resolved passwd identity before subsequent group lookups, avoiding reliance on NSS-owned record storage across calls.
-- Added regression coverage for combined user-and-group membership requests.
-
-- Added the `varlink-vendor` Meson option to configure the vendor reported by `org.varlink.service.GetInfo`.
-
-- Report NSS home-directory availability through the per-home State property and GetHomeByName, GetHomeByUID, and ListHomes; document that this does not represent managed-home activation.
-- Added D-Bus regression coverage ensuring the manager state and per-home State property agree.
-
-- Added isolated D-Bus integration tests for user lookups by name, UID, and PID, home lookups by name and UID, home properties, home enumeration, unsupported lifecycle operations, and missing-user errors.
-- Added isolated Varlink integration tests for user, group, and membership records, invalid JSON, unsupported methods, bad service names, persistent connections, and concurrent clients.
-- Added a mixed D-Bus/Varlink concurrency regression test exercising the shared NSS mutex from both interfaces.
-- Added a private-path Varlink listener entry point so tests never bind or remove the production userdb socket.
-
-- Allow unprivileged system-bus clients to call GetUserRecordByUID, GetUserRecordByName, and GetUserRecordByPID.
-- Keep Varlink connections open for multiple NUL-terminated requests, dispatching each request and returning its response before reading the next request.
-
-- Unified Varlink membership queries around NSS supplementary-group lookup so user-to-group and group-to-user membership results use consistent semantics; added membership consistency regression coverage.
-- Added Varlink listener restart regression coverage to verify that the socket can be removed and recreated and that lookups work after restart.
-- Added bounded NSS mutex acquisition for D-Bus and Varlink requests so requests return an error instead of waiting indefinitely when NSS remains busy.
-- Added D-Bus and Varlink lock-contention regression tests, plus a test-only simulated NSS provider re-entry test verifying that a nested request fails with `ServiceNotAvailable` while the outer request can complete.
+- Reported NSS home-directory availability through per-home `State`, `GetHomeByName`, `GetHomeByUID`, and `ListHomes`, without claiming managed-home activation; added consistency tests.
+- Added isolated D-Bus integration tests for account and home lookups, enumeration, missing users, read-only properties, and unsupported lifecycle operations.
+- Added isolated Varlink integration tests for user, group, and membership records, invalid requests, unsupported methods, service-name validation, persistent connections, and concurrent clients.
+- Added mixed D-Bus/Varlink NSS concurrency coverage and private-path Varlink listener tests to avoid touching the production socket.
+- Allowed unprivileged system-bus callers to use read-only `GetUserRecordByUID`, `GetUserRecordByName`, and `GetUserRecordByPID`.
+- Kept Varlink connections open across multiple NUL-terminated requests, with pipelined-request tests.
+- Unified Varlink supplementary-group membership results across user and group queries; added membership consistency tests.
+- Added Varlink listener restart tests, bounded NSS mutex acquisition for D-Bus and Varlink requests, lock-contention tests, and simulated NSS provider re-entry coverage.
 
 ## 0.3.1
 
