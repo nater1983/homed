@@ -795,6 +795,65 @@ test_shutdown_active_connection(Fixture *unused, gconstpointer data)
     g_object_unref(connection);
 }
 
+/* Keep all worker slots occupied by idle, accepted connections.  Each
+ * GetInfo reply confirms that the listener dispatched that connection. */
+static void
+test_worker_limit_recovery(Fixture *unused, gconstpointer data)
+{
+    enum { LIMIT = 128 };
+    GSocketConnection *held[LIMIT] = { NULL };
+    GSocketConnection *overflow;
+    GSocket *socket;
+    GInputStream *input;
+    guint8 byte;
+    GError *error = NULL;
+    gssize count;
+
+    (void) unused; (void) data;
+
+    for (guint i = 0; i < LIMIT; i++) {
+        gchar *reply;
+        held[i] = connect_socket();
+        reply = exchange(held[i],
+            "{\\"method\\":\\"org.varlink.service.GetInfo\\",\\"parameters\\":{}}");
+        assert_reply_contains(reply, "\\"product\\":\\"homed\\"");
+        g_free(reply);
+    }
+
+    /* Admission must close the 129th connection without spawning a worker.
+     * Bound the read so a broken rejection path fails rather than hangs. */
+    overflow = connect_socket();
+    socket = g_socket_connection_get_socket(overflow);
+    g_socket_set_timeout(socket, 5);
+    input = g_io_stream_get_input_stream(G_IO_STREAM(overflow));
+    count = g_input_stream_read(input, &byte, 1, NULL, &error);
+    g_assert_no_error(error);
+    g_assert_cmpint(count, ==, 0);
+    g_io_stream_close(G_IO_STREAM(overflow), NULL, NULL);
+    g_object_unref(overflow);
+
+    /* Release one worker and verify that a fresh connection is admitted.
+     * The worker exits asynchronously, so allow bounded time for cleanup. */
+    g_io_stream_close(G_IO_STREAM(held[0]), NULL, NULL);
+    g_clear_object(&held[0]);
+    g_usleep(100000);
+
+    {
+        GSocketConnection *recovered = connect_socket();
+        gchar *reply = exchange(recovered,
+            "{\\"method\\":\\"org.varlink.service.GetInfo\\",\\"parameters\\":{}}");
+        assert_reply_contains(reply, "\\"product\\":\\"homed\\"");
+        g_free(reply);
+        g_io_stream_close(G_IO_STREAM(recovered), NULL, NULL);
+        g_object_unref(recovered);
+    }
+
+    for (guint i = 1; i < LIMIT; i++) {
+        g_io_stream_close(G_IO_STREAM(held[i]), NULL, NULL);
+        g_object_unref(held[i]);
+    }
+}
+
 int
 main(int argc, char **argv)
 {
@@ -851,5 +910,7 @@ main(int argc, char **argv)
                test_pipelined_requests, teardown);
     g_test_add("/varlink/concurrent-requests", Fixture, NULL, setup,
                test_concurrent_requests, teardown);
+    g_test_add("/varlink/worker-limit-recovery", Fixture, NULL, setup,
+               test_worker_limit_recovery, teardown);
     return g_test_run();
 }
