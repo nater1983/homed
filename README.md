@@ -36,6 +36,8 @@ The `State` property reports conventional home-directory availability: it return
 
 The `Activate`, `Deactivate`, `Lock`, `Unlock`, and `Resize` methods are declared but return `org.freedesktop.home1.NotSupported`.
 
+The system-bus policy reserves ownership of `org.freedesktop.home1` for root and allows other callers to use the read-only Manager methods, read properties, and use standard introspection and peer methods. The installed Polkit actions and group rule are reserved for future managed-home operations. The daemon currently makes no Polkit authorization calls.
+
 User records currently contain the NSS-derived fields `userName`, `uid`, `gid`, `realName`, `homeDirectory`, `shell`, `service`, and `disposition`. D-Bus records identify their source as `nss`.
 
 ### Varlink interface
@@ -55,6 +57,8 @@ The service implements:
 The interface returns records for accounts and groups available through NSS. NSS does not provide the managed-home metadata, secrets, bindings, or signatures required for a complete systemd-homed record, so NSS-derived user and group records are returned with `incomplete=true`. The Varlink provider identifies itself as `io.systemd.Home`.
 
 The socket path is used for user-database discovery compatibility; it does not mean that systemd is required or installed.
+
+The listener uses a mode-`0666` socket for local account lookups. The socket directory must be owned by root or the daemon user and writable only by its owner. Admission uses the peer UID reported by the kernel for connection accounting.
 
 ### NSS concurrency
 

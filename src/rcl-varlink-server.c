@@ -4,6 +4,49 @@
 #include <glib/gstdio.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <unistd.h>
+
+static gboolean
+check_socket_directory(const gchar *directory, gboolean final, GError **error)
+{
+    struct stat status;
+    g_autofree gchar *parent = g_path_get_dirname(directory);
+    int result;
+
+    if (!g_str_equal(parent, directory) &&
+        !check_socket_directory(parent, FALSE, error))
+        return FALSE;
+
+    result = lstat(directory, &status);
+    if (result < 0 && errno == ENOENT) {
+        if (g_mkdir(directory, 0755) < 0 && errno != EEXIST) {
+            int saved_errno = errno;
+            g_set_error(error, G_IO_ERROR, g_io_error_from_errno(saved_errno),
+                        "cannot create %s: %s", directory, g_strerror(saved_errno));
+            return FALSE;
+        }
+        result = lstat(directory, &status);
+    }
+    if (result < 0) {
+        int saved_errno = errno;
+        g_set_error(error, G_IO_ERROR, g_io_error_from_errno(saved_errno),
+                    "cannot inspect %s: %s", directory, g_strerror(saved_errno));
+        return FALSE;
+    }
+
+    /* A trusted sticky ancestor such as /tmp protects entries owned by
+     * the daemon. The directory containing the socket must be private
+     * to its owner for writes. */
+    if (!S_ISDIR(status.st_mode) ||
+        (status.st_uid != 0 && status.st_uid != geteuid()) ||
+        ((status.st_mode & (S_IWGRP | S_IWOTH)) &&
+         (final || !(status.st_mode & S_ISVTX)))) {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                    "unsafe Varlink socket directory: %s", directory);
+        return FALSE;
+    }
+    return TRUE;
+}
 
 static gboolean
 incoming_connection(GSocketService *service, GSocketConnection *connection,
@@ -23,13 +66,19 @@ rcl_varlink_server_start_at(const gchar *directory, const gchar *socket_path,
     GSocketAddress *address;
     GSocketAddress *effective_address = NULL;
     RclVarlinkWorkers *workers;
+    g_autofree gchar *socket_directory = g_path_get_dirname(socket_path);
 
-    if (g_mkdir_with_parents(directory, 0755) < 0) {
-        g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
-                    "cannot create %s: %s", directory, g_strerror(errno));
+    if (!g_path_is_absolute(directory) ||
+        !g_str_equal(directory, socket_directory)) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                            "Varlink socket must be inside its specified absolute directory");
         return NULL;
     }
+    if (!check_socket_directory(directory, TRUE, error))
+        return NULL;
+
     if (lstat(socket_path, &status) == 0) {
+        g_autoptr(GError) probe_error = NULL;
         GSocket *probe;
         gboolean connected;
         if (!S_ISSOCK(status.st_mode)) {
@@ -37,17 +86,29 @@ rcl_varlink_server_start_at(const gchar *directory, const gchar *socket_path,
                         "%s exists and is not a socket", socket_path);
             return NULL;
         }
+        if (status.st_uid != geteuid()) {
+            g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                        "cannot replace socket owned by another user: %s", socket_path);
+            return NULL;
+        }
         probe = g_socket_new(G_SOCKET_FAMILY_UNIX, G_SOCKET_TYPE_STREAM,
                              G_SOCKET_PROTOCOL_DEFAULT, error);
         if (probe == NULL)
             return NULL;
+        g_socket_set_blocking(probe, FALSE);
         address = g_unix_socket_address_new(socket_path);
-        connected = g_socket_connect(probe, address, NULL, NULL);
+        connected = g_socket_connect(probe, address, NULL, &probe_error);
         g_object_unref(address);
         g_object_unref(probe);
         if (connected) {
             g_set_error(error, G_IO_ERROR, G_IO_ERROR_ADDRESS_IN_USE,
                         "another service is listening on %s", socket_path);
+            return NULL;
+        }
+        if (!g_error_matches(probe_error, G_IO_ERROR,
+                             G_IO_ERROR_CONNECTION_REFUSED)) {
+            g_propagate_prefixed_error(error, g_steal_pointer(&probe_error),
+                                       "cannot probe %s: ", socket_path);
             return NULL;
         }
         if (g_unlink(socket_path) < 0) {
@@ -104,9 +165,11 @@ rcl_varlink_server_stop(GSocketService *service)
     RclVarlinkWorkers *workers =
         g_object_get_data(G_OBJECT(service), "homed-varlink-workers");
     g_socket_service_stop(service);
-    g_socket_listener_close(G_SOCKET_LISTENER(service));
-    rcl_varlink_workers_shutdown(workers);
+    /* Remove the path while the listener still owns it. A new listener
+     * can bind the path while the old workers are draining. */
     if (socket_path != NULL)
         g_unlink(socket_path);
+    g_socket_listener_close(G_SOCKET_LISTENER(service));
+    rcl_varlink_workers_shutdown(workers);
     g_object_unref(service);
 }

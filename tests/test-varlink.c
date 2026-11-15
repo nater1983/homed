@@ -6,6 +6,8 @@
 #include <json-glib/json-glib.h>
 #include <glib/gstdio.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 typedef struct {
     gchar *directory;
@@ -498,6 +500,103 @@ test_nss_provider_recursion(Fixture *unused, gconstpointer data)
 }
 
 static void
+test_listener_path_safety(void)
+{
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *base = g_dir_make_tmp("homed-varlink-path-XXXXXX", &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(base);
+
+    g_autofree gchar *directory = g_build_filename(base, "socket-dir", NULL);
+    g_autofree gchar *socket_path = g_build_filename(directory, "io.systemd.Home", NULL);
+    g_autofree gchar *alias = g_build_filename(base, "alias", NULL);
+    g_autofree gchar *alias_socket = g_build_filename(alias, "io.systemd.Home", NULL);
+    g_assert_cmpint(g_mkdir(directory, 0700), ==, 0);
+    g_assert_cmpint(symlink(directory, alias), ==, 0);
+
+    g_assert_null(rcl_varlink_start_at(alias, alias_socket, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+    g_clear_error(&error);
+
+    g_assert_cmpint(g_chmod(base, 0777), ==, 0);
+    g_assert_null(rcl_varlink_start_at(directory, socket_path, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+    g_clear_error(&error);
+    g_assert_cmpint(g_chmod(base, 0700), ==, 0);
+
+    g_assert_cmpint(g_chmod(directory, 01777), ==, 0);
+    g_assert_null(rcl_varlink_start_at(directory, socket_path, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+    g_clear_error(&error);
+    g_assert_cmpint(g_chmod(directory, 0700), ==, 0);
+
+    g_assert_true(g_file_set_contents(socket_path, "keep", -1, &error));
+    g_assert_no_error(error);
+    g_assert_null(rcl_varlink_start_at(directory, socket_path, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_EXISTS);
+    g_clear_error(&error);
+    g_autofree gchar *contents = NULL;
+    g_assert_true(g_file_get_contents(socket_path, &contents, NULL, &error));
+    g_assert_no_error(error);
+    g_assert_cmpstr(contents, ==, "keep");
+    g_assert_cmpint(g_unlink(socket_path), ==, 0);
+    g_assert_cmpint(g_unlink(alias), ==, 0);
+    g_assert_cmpint(g_rmdir(directory), ==, 0);
+    g_assert_cmpint(g_rmdir(base), ==, 0);
+}
+
+static void
+test_listener_active_socket(Fixture *unused, gconstpointer data)
+{
+    struct stat status;
+    g_autoptr(GError) error = NULL;
+    (void) unused; (void) data;
+
+    g_assert_cmpint(lstat(fixture.socket_path, &status), ==, 0);
+    g_assert_true(S_ISSOCK(status.st_mode));
+    g_assert_cmpuint(status.st_mode & 0777, ==, 0666);
+
+    g_assert_null(rcl_varlink_start_at(fixture.directory,
+                                      fixture.socket_path, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_ADDRESS_IN_USE);
+
+    g_autoptr(GSocketConnection) connection = connect_socket();
+    g_autofree gchar *reply = exchange(connection,
+        "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{}}");
+    assert_reply_contains(reply, "\"product\":\"homed\"");
+}
+
+static void
+test_listener_stale_socket(Fixture *unused, gconstpointer data)
+{
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GSocket) socket = NULL;
+    g_autoptr(GSocketAddress) address = NULL;
+    (void) unused; (void) data;
+
+    rcl_varlink_stop(fixture.service);
+    fixture.service = NULL;
+    socket = g_socket_new(G_SOCKET_FAMILY_UNIX, G_SOCKET_TYPE_STREAM,
+                          G_SOCKET_PROTOCOL_DEFAULT, &error);
+    g_assert_no_error(error);
+    address = g_unix_socket_address_new(fixture.socket_path);
+    g_assert_true(g_socket_bind(socket, address, FALSE, &error));
+    g_assert_no_error(error);
+    g_assert_true(g_socket_close(socket, &error));
+    g_assert_no_error(error);
+
+    fixture.service = rcl_varlink_start_at(fixture.directory,
+                                          fixture.socket_path, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(fixture.service);
+
+    g_autoptr(GSocketConnection) connection = connect_socket();
+    g_autofree gchar *reply = exchange(connection,
+        "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{}}");
+    assert_reply_contains(reply, "\"product\":\"homed\"");
+}
+
+static void
 test_listener_restart(Fixture *unused, gconstpointer data)
 {
     (void) unused; (void) data;
@@ -959,6 +1058,11 @@ main(int argc, char **argv)
                test_combined_membership_identity, teardown);
     g_test_add("/varlink/listener-restart", Fixture, NULL, setup,
                test_listener_restart, teardown);
+    g_test_add_func("/varlink/listener-path-safety", test_listener_path_safety);
+    g_test_add("/varlink/listener-active-socket", Fixture, NULL, setup,
+               test_listener_active_socket, teardown);
+    g_test_add("/varlink/listener-stale-socket", Fixture, NULL, setup,
+               test_listener_stale_socket, teardown);
     g_test_add("/varlink/membership-nss-failures", Fixture, NULL, setup,
                test_membership_nss_failures, teardown);
     g_test_add("/varlink/nss-lock-contention", Fixture, NULL, setup,

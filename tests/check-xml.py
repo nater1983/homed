@@ -8,29 +8,51 @@ for path in sys.argv[1:]:
         raise SystemExit(f"unexpected XML root {root.tag!r} in {path}")
 
     if root.tag == "busconfig":
+        destination = "org.freedesktop.home1"
+        owner = root.find("policy[@user='root']")
         default = root.find("policy[@context='default']")
-        if default is None:
-            raise SystemExit("default D-Bus policy missing")
-        property_rules = [
-            rule for rule in default.findall("allow")
-            if rule.get("send_interface") == "org.freedesktop.DBus.Properties"
+        if owner is None or default is None or len(root) != 2:
+            raise SystemExit("expected only root and default D-Bus policies")
+        expected_owner = [
+            {"own": destination},
+            {"send_destination": destination},
+            {"receive_sender": destination},
         ]
-        property_members = {rule.get("send_member") for rule in property_rules}
-        if property_members != {"Get", "GetAll"}:
-            raise SystemExit(
-                f"default D-Bus property access is {property_members!r}, "
-                "expected only Get and GetAll"
-            )
-        if any(rule.get("send_interface") == "org.freedesktop.home1.Home"
-               for rule in default.findall("allow")):
-            raise SystemExit("default policy must not allow Home lifecycle methods")
-        for method in ("GetHomeByName", "GetHomeByUID",
-                       "GetUserRecordByUID", "GetUserRecordByName",
-                       "GetUserRecordByPID", "ListHomes"):
-            if not any(rule.get("send_interface") == "org.freedesktop.home1.Manager"
-                       and rule.get("send_member") == method
-                       for rule in default.findall("allow")):
-                raise SystemExit(f"default policy does not allow Manager.{method}")
+        expected_default = [{"receive_sender": destination}]
+        read_only = {
+            "org.freedesktop.DBus.Introspectable": ("Introspect",),
+            "org.freedesktop.DBus.Peer": ("Ping", "GetMachineId"),
+            "org.freedesktop.DBus.Properties": ("Get", "GetAll"),
+            "org.freedesktop.home1.Manager": (
+                "GetHomeByName", "GetHomeByUID", "GetUserRecordByUID",
+                "GetUserRecordByName", "GetUserRecordByPID", "ListHomes",
+            ),
+        }
+        for interface, members in read_only.items():
+            for member in members:
+                expected_default.append({"send_destination": destination,
+                                         "send_interface": interface,
+                                         "send_member": member})
+        for policy, expected in ((owner, expected_owner),
+                                 (default, expected_default)):
+            actual = [rule.attrib for rule in policy.findall("allow")]
+            if len(policy) != len(expected) or any(rule not in actual for rule in expected):
+                raise SystemExit(f"unexpected D-Bus rules for {policy.attrib}: {actual!r}")
+
+    if root.tag == "policyconfig":
+        actions = root.findall("action")
+        expected_ids = {"org.freedesktop.home1.manage-home",
+                        "org.freedesktop.home1.activate-home"}
+        if len(actions) != len(expected_ids) or {a.get("id") for a in actions} != expected_ids:
+            raise SystemExit("unexpected homed Polkit actions")
+        for action in actions:
+            defaults = action.find("defaults")
+            expected = {"allow_any": "auth_admin", "allow_inactive": "auth_admin",
+                        "allow_active": "auth_admin_keep"}
+            if defaults is None or len(defaults) != len(expected) or {
+                rule.tag: rule.text for rule in defaults
+            } != expected:
+                raise SystemExit(f"unexpected Polkit defaults for {action.get('id')}")
 
     if root.tag == "node":
         interfaces = {i.get("name"): i for i in root.findall("interface")}
