@@ -2,6 +2,9 @@
 
 ## 0.4.0 — Development (Phase 7)
 
+- Return Varlink `InvalidParameter` for empty frames while preserving the connection; return a protocol error and close on oversized frames (1 MiB limit).
+- Add an empty-frame recovery regression test; oversized-frame and incomplete-frame regression coverage is still pending.
+
 - Reject Varlink requests with non-boolean `more` fields using `org.varlink.service.InvalidParameter` instead of silently ignoring the invalid value.
 - Add Varlink integration coverage for string, numeric, and null `more` values, and verify the connection remains usable after validation errors.
 
