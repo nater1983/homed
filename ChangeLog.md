@@ -1,6 +1,9 @@
 # ChangeLog
 
-## 0.4.0
+## 0.4.beta — 2026-11-15
+
+Beta prerelease covering development phases 1–6. D-Bus and Varlink compatibility, NSS-backed account and group lookups, home availability reporting, concurrency protections, and NSS failure handling have passed the Slackware test suite (3/3 Meson suites; 33 individual tests). Phases 7–12 remain for the final 0.4.0 release.
+
 
 - Propagated supplementary-group NSS failures as `ServiceNotAvailable` in user, combined user/group, and group-filtered membership queries rather than silently reporting missing memberships.
 - Added test-only NSS group lookup failure injection and integration regression coverage for all three membership filter modes, including recovery after the simulated failure.
