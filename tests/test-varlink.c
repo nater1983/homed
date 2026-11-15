@@ -730,10 +730,43 @@ test_incomplete_frame_disconnect(Fixture *unused, gconstpointer data)
     g_object_unref(connection);
 }
 
+
+static void
+test_disconnect_recovery(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    /* Disconnect repeatedly, including with an unfinished frame. */
+    for (guint i = 0; i < 32; i++) {
+        GSocketConnection *connection = connect_socket();
+        GOutputStream *output =
+            g_io_stream_get_output_stream(G_IO_STREAM(connection));
+        const gchar *partial = "{";
+        GError *error = NULL;
+        g_assert_true(g_output_stream_write_all(output, partial,
+                                                strlen(partial), NULL,
+                                                NULL, &error));
+        g_assert_no_error(error);
+        g_assert_true(g_io_stream_close(G_IO_STREAM(connection), NULL, &error));
+        g_assert_no_error(error);
+        g_object_unref(connection);
+    }
+
+    /* A subsequent connection must still serve a valid request. */
+    GSocketConnection *connection = connect_socket();
+    gchar *reply = exchange(connection,
+        "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{}}");
+    assert_reply_contains(reply, "\"product\":\"homed\"");
+    g_free(reply);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
 int
 main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
+    g_test_add("/varlink/disconnect-recovery", Fixture, NULL, setup,
+               test_disconnect_recovery, teardown);
     g_test_add("/varlink/oversized-frame", Fixture, NULL, setup,
                test_oversized_frame, teardown);
     g_test_add("/varlink/incomplete-frame-disconnect", Fixture, NULL, setup,
