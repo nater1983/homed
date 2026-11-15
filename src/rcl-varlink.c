@@ -688,6 +688,13 @@ serve_connection(gpointer data)
         if (byte == '\0') {
             const guint8 terminator = 0;
 
+            if (request->len == 0) {
+                if (!send_error(output, "org.varlink.service.InvalidParameter",
+                                &error))
+                    break;
+                continue;
+            }
+
             g_byte_array_append(request, &terminator, 1);
 
             if (!dispatch_request(output, (const gchar *) request->data,
@@ -700,9 +707,11 @@ serve_connection(gpointer data)
         }
 
         if (request->len >= MAX_REQUEST_SIZE) {
-            g_set_error_literal(&error, G_IO_ERROR,
-                                G_IO_ERROR_MESSAGE_TOO_LARGE,
-                                "Varlink request exceeds the size limit");
+            /* The oversized frame cannot be parsed or resynchronized safely.
+             * Send a protocol error, then close this connection. */
+            if (!send_error(output, "org.varlink.service.InvalidParameter",
+                            &error))
+                break;
             break;
         }
 
