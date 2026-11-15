@@ -2,6 +2,8 @@
 
 ## 0.4.0 — Development (Phase 7)
 
+- Add a regression test for repeated client disconnects with incomplete frames followed by a successful Varlink request; worker shutdown coordination remains under review.
+
 - Add Varlink regression tests for oversized request frames and EOF on incomplete frames, checking protocol error/connection closure and preventing partial request dispatch.
 
 - Return Varlink `InvalidParameter` for empty frames while preserving the connection; return a protocol error and close on oversized frames (1 MiB limit).
