@@ -109,6 +109,29 @@ assert_reply_contains(const gchar *reply, const gchar *needle)
 }
 
 static void
+test_invalid_more_type(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    GSocketConnection *connection = connect_socket();
+    const gchar *requests[] = {
+        "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{},\"more\":\"true\"}",
+        "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{},\"more\":1}",
+        "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{},\"more\":null}"
+    };
+    for (guint i = 0; i < G_N_ELEMENTS(requests); i++) {
+        gchar *reply = exchange(connection, requests[i]);
+        assert_reply_contains(reply, "org.varlink.service.InvalidParameter");
+        g_free(reply);
+    }
+    gchar *reply = exchange(connection,
+        "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{},\"more\":false}");
+    assert_reply_contains(reply, "\"product\":\"homed\"");
+    g_free(reply);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
+static void
 test_get_info(Fixture *unused, gconstpointer data)
 {
     (void) unused; (void) data;
@@ -637,6 +660,8 @@ int
 main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
+    g_test_add("/varlink/invalid-more-type", Fixture, NULL, setup,
+               test_invalid_more_type, teardown);
     g_test_add("/varlink/get-info", Fixture, NULL, setup,
                test_get_info, teardown);
     g_test_add("/varlink/user-record", Fixture, NULL, setup,
