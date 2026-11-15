@@ -4,6 +4,8 @@ homed_sources = files(
   'rcl-nss.c',
   'rcl-varlink.c',
   'rcl-varlink-limits.c',
+  'rcl-varlink-worker.c',
+  'rcl-varlink-server.c',
 )
 
 executable('homed', homed_sources,
