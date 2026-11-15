@@ -43,7 +43,7 @@ With the package installed and the SysVinit system bus running, check
 activation from a regular user shell. Use a test host with no running
 `homed` instance. `NameHasOwner` should return `false` before the lookup and
 `true` afterward. The lookup should return `sbo` with a JSON record for
-`root`, `true` for `incomplete`, and the object path of the Home record.
+`root`, `false` for `incomplete`, and the object path of the Home record.
 
 ```sh
 busctl --system call org.freedesktop.DBus /org/freedesktop/DBus \

@@ -223,7 +223,7 @@ test_user_record(Fixture *unused, gconstpointer data)
     assert_reply_contains(reply, "\"userName\":\"root\"");
     assert_reply_contains(reply, "\"uid\":0");
     assert_reply_contains(reply, "\"homeDirectory\":\"/root\"");
-    assert_reply_contains(reply, "\"incomplete\":true");
+    assert_reply_contains(reply, "\"incomplete\":false");
     g_free(reply);
     g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
     g_object_unref(connection);
@@ -393,6 +393,11 @@ test_membership_consistency(Fixture *unused, gconstpointer data)
 {
     (void) unused; (void) data;
     GSocketConnection *connection = connect_socket();
+    g_autofree gchar *reply = exchange(connection,
+        "{\"method\":\"io.systemd.UserDatabase.GetMemberships\","
+        "\"parameters\":{\"service\":\"io.systemd.Home\",\"userName\":\"root\"}}");
+    assert_reply_contains(reply, "org.varlink.service.ExpectedMore");
+
     GPtrArray *user_replies = exchange_memberships(connection,
         "\"service\":\"io.systemd.Home\",\"userName\":\"root\"");
     gboolean found_root_group = FALSE;
@@ -477,7 +482,7 @@ test_membership_nss_failures(Fixture *unused, gconstpointer data)
     for (guint i = 0; i < G_N_ELEMENTS(filters); i++) {
         GSocketConnection *connection = connect_socket();
         gchar *request = g_strdup_printf(
-            "{\"method\":\"io.systemd.UserDatabase.GetMemberships\","
+            "{\"method\":\"io.systemd.UserDatabase.GetMemberships\",\"more\":true,"
             "\"parameters\":{\"service\":\"io.systemd.Home\",%s}}", filters[i]);
         gchar *reply = exchange(connection, request);
         assert_reply_contains(reply, "io.systemd.UserDatabase.ServiceNotAvailable");

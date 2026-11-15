@@ -31,8 +31,11 @@ and
 .BR GetMemberships .
 The first two return NSS-derived user or group records and set
 .B incomplete
-to true because NSS does not supply managed-home metadata. Membership queries
-return the user/group pairs known through NSS. Unsupported enumeration requests
+to false because no privileged fields are redacted. Membership queries
+return the user/group pairs known through NSS. A query specifying only a user
+or only a group requires the Varlink
+.B more
+flag. Unsupported enumeration requests
 return
 .BR io.systemd.UserDatabase.EnumerationNotSupported .
 The Varlink socket is created with mode 0666 for user-database discovery
@@ -81,10 +84,11 @@ The D-Bus interface reports service
 .BR nss ;
 the Varlink interface identifies its provider as
 .BR io.systemd.Home .
-These records return true for the
+Name and UID lookups return false for the
 .I incomplete
-output because NSS does not provide managed-home metadata, secrets, bindings,
-or signatures required for a complete systemd-homed user record.
+output because no privileged fields are redacted. The PID extension retains
+its original incomplete flag. An empty name in either name-based Manager
+lookup selects the calling user's NSS account.
 .TP
 .B AutoLogin
 The manager exposes this read-only property as an empty array.

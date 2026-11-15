@@ -37,7 +37,8 @@ static const gchar service_description[] =
     "method GetInterfaceDescription(interface: string) -> (description: string)\n"
     "error InterfaceNotFound(interface: string)\n"
     "error MethodNotFound(method: string)\n"
-    "error InvalidParameter(parameter: string)\n";
+    "error InvalidParameter(parameter: string)\n"
+    "error ExpectedMore()\n";
 
 typedef struct {
     gchar *user_name;
@@ -221,7 +222,8 @@ send_user_record(GOutputStream *output, const struct passwd *user,
 
     json_object_set_object_member(parameters, "record",
                                   rcl_nss_user_record(user, VARLINK_SERVICE));
-    json_object_set_boolean_member(parameters, "incomplete", TRUE);
+    /* This NSS record has no privileged section to redact. */
+    json_object_set_boolean_member(parameters, "incomplete", FALSE);
 
     return send_reply(output, parameters, FALSE, error);
 }
@@ -234,7 +236,7 @@ send_group_record(GOutputStream *output, const struct group *group,
 
     json_object_set_object_member(parameters, "record",
                                   make_group_record(group));
-    json_object_set_boolean_member(parameters, "incomplete", TRUE);
+    json_object_set_boolean_member(parameters, "incomplete", FALSE);
 
     return send_reply(output, parameters, FALSE, error);
 }
@@ -433,7 +435,7 @@ add_membership(GPtrArray *memberships, const gchar *user_name,
 
 static gboolean
 send_memberships(GPtrArray *memberships, GOutputStream *output,
-                 gboolean allow_multiple, GError **error)
+                 GError **error)
 {
     guint count = memberships->len;
 
@@ -443,7 +445,7 @@ send_memberships(GPtrArray *memberships, GOutputStream *output,
     for (guint i = 0; i < count; i++) {
         Membership *membership = g_ptr_array_index(memberships, i);
         JsonObject *parameters = json_object_new_empty();
-        gboolean continues = allow_multiple && i + 1 < count;
+        gboolean continues = i + 1 < count;
 
         json_object_set_string_member(parameters, "userName",
                                       membership->user_name);
@@ -453,8 +455,6 @@ send_memberships(GPtrArray *memberships, GOutputStream *output,
         if (!send_reply(output, parameters, continues, error))
             return FALSE;
 
-        if (!allow_multiple)
-            break;
     }
 
     return TRUE;
@@ -466,20 +466,18 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
 {
     const gchar *requested_user = get_string(parameters, "userName");
     const gchar *requested_group = get_string(parameters, "groupName");
+
+    if (requested_user == NULL && requested_group == NULL)
+        return send_error(output, USER_DATABASE ".EnumerationNotSupported", error);
+    if (!allow_multiple && (requested_user == NULL || requested_group == NULL))
+        return send_error(output, SERVICE_INTERFACE ".ExpectedMore", error);
+
     gchar *user_name = g_strdup(requested_user);
     gchar *group_name = g_strdup(requested_group);
     GPtrArray *memberships = g_ptr_array_new_with_free_func(membership_free);
     struct passwd *user = NULL;
     struct group *group = NULL;
     gboolean success;
-
-    if (user_name == NULL && group_name == NULL) {
-        g_free(group_name);
-        g_free(user_name);
-        g_ptr_array_unref(memberships);
-        return send_error(output, USER_DATABASE ".EnumerationNotSupported",
-                          error);
-    }
 
     /* NSS may reuse static lookup storage. Snapshot the passwd identity
      * before looking up a group or performing another NSS operation. */
@@ -568,7 +566,7 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
         g_ptr_array_unref(users);
     }
 
-    success = send_memberships(memberships, output, allow_multiple, error);
+    success = send_memberships(memberships, output, error);
     g_ptr_array_unref(memberships);
     g_free(group_name);
     g_free(user_name);

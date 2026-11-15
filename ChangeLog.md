@@ -1,19 +1,14 @@
 # ChangeLog
 
-## 0.4.0 — Development (Phase 7)
+## 0.4.rc — 2026-11-15
 
-- Track Varlink worker connections and drain active workers when stopping the listener; add a shutdown regression test with an accepted, partially written request (pending Slackware verification).
-
-- Add a regression test for repeated client disconnects with incomplete frames followed by a successful Varlink request; worker shutdown coordination remains under review.
-
-- Add Varlink regression tests for oversized request frames and EOF on incomplete frames, checking protocol error/connection closure and preventing partial request dispatch.
-
-- Return Varlink `InvalidParameter` for empty frames while preserving the connection; return a protocol error and close on oversized frames (1 MiB limit).
-- Add an empty-frame recovery regression test; oversized-frame and incomplete-frame regression coverage is still pending.
-
-- Reject Varlink requests with non-boolean `more` fields using `org.varlink.service.InvalidParameter` instead of silently ignoring the invalid value.
-- Add Varlink integration coverage for string, numeric, and null `more` values, and verify the connection remains usable after validation errors.
-
+- Match the upstream read-only D-Bus reply `sbo` for name and UID lookups and expose the `UnixRecord` and `UserRecord` Home properties. An empty name resolves the D-Bus caller. The homed-specific PID lookup retains its `a{sv}b` reply.
+- Share NSS user-record formatting across D-Bus and Varlink. Report `incomplete=false` on upstream-shaped replies because homed omits no privileged fields from its NSS records. Slackware tools continue to manage the accounts and their home directories.
+- Add Varlink interface descriptions, require `service=io.systemd.Home`, and report unsupported lookup filters as `InvalidParameter`. Membership requests that select only a user or only a group require `more` and return all matching pairs.
+- Separate the Varlink protocol, listener, workers, and connection accounting. Enforce 128 workers and up to 128 connections per UID, and reject frames larger than 1 MiB.
+- Narrow the default D-Bus allowlist, validate the Varlink socket directory, and support Slackware's `/run/systemd` alias to `/run/elogind`.
+- Drain Varlink workers and remove the socket on `SIGTERM` and `SIGINT`. Use the reconnect timer when the system bus disconnects.
+- Add regression coverage for saturated shutdown, slot recovery, independent UID counters, socket safety, and read-only protocol replies. Installed Slackware checks verified unprivileged D-Bus activation, elogind lookup, and socket removal and recreation after `SIGTERM` before the release-candidate protocol changes.
 
 ## 0.4.beta — 2026-11-15
 

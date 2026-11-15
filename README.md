@@ -42,6 +42,8 @@ User records contain the NSS-derived fields `userName`, `uid`, `gid`, `realName`
 
 In 0.4.0, `GetUserRecordByName` and `GetUserRecordByUID` return the upstream `sbo` signature: a JSON user record, the `incomplete` flag, and a Home object path. Clients using the previous `a{sv}b` reply must decode the JSON string. The homed-specific `GetUserRecordByPID` still returns `a{sv}b`. Home objects also provide the read-only `UnixRecord` and `UserRecord` properties.
 
+An empty name in `GetHomeByName` or `GetUserRecordByName` looks up the calling user's NSS account.
+
 ### Varlink interface
 
 The Varlink socket is:
@@ -60,7 +62,7 @@ All three methods require `"service":"io.systemd.Home"`. Unsupported lookup
 filters return `InvalidParameter` with the parameter name. Use
 `org.varlink.service.GetInterfaceDescription` to see the supported parameters.
 
-The interface returns records for accounts and groups available through NSS. NSS does not provide the managed-home metadata, secrets, bindings, or signatures required for a complete systemd-homed record, so NSS-derived user and group records are returned with `incomplete=true`. The Varlink provider identifies itself as `io.systemd.Home`.
+The interface returns NSS records with `incomplete=false` because there are no privileged fields to redact. The Varlink provider identifies itself as `io.systemd.Home`. For membership queries with only a user name or group name, send the Varlink `more` flag to receive all matching pairs.
 
 The socket path is used for user-database discovery compatibility; it does not mean that systemd is required or installed.
 
@@ -180,7 +182,7 @@ varlinkctl call unix:/run/systemd/userdb/io.systemd.Home \
   io.systemd.UserDatabase.GetGroupRecord \
   '{"groupName":"root","service":"io.systemd.Home"}'
 
-varlinkctl call unix:/run/systemd/userdb/io.systemd.Home \
+varlinkctl --more call unix:/run/systemd/userdb/io.systemd.Home \
   io.systemd.UserDatabase.GetMemberships \
   '{"userName":"root","service":"io.systemd.Home"}'
 ```

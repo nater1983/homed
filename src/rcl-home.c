@@ -119,7 +119,7 @@ return_user_record(RclHome *self, GDBusMethodInvocation *inv, const struct passw
     const HomeEntry *home = g_hash_table_lookup(self->homes_by_uid,
                                                GUINT_TO_POINTER((guint) user->pw_uid));
     g_autofree gchar *json = user_record_json(user);
-    g_dbus_method_invocation_return_value(inv, g_variant_new("(sbo)", json, TRUE, home->path));
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(sbo)", json, FALSE, home->path));
 }
 
 static void return_user_record_by_pid(GDBusMethodInvocation *inv, const struct passwd *pw) {
@@ -153,16 +153,16 @@ static struct passwd *passwd_for_pid(pid_t pid) {
     return pw;
 }
 
-static void method_call_unlocked(GDBusConnection *conn, const gchar *sender, const gchar *obj,
- const gchar *iface, const gchar *method, GVariant *params, GDBusMethodInvocation *inv, gpointer data) {
+static void method_call_unlocked(const gchar *method, GVariant *params, const guint32 *caller_uid,
+                                 GDBusMethodInvocation *inv, gpointer data) {
     RclHome *self = data; struct passwd *pw = NULL;
-    (void)conn; (void)sender; (void)obj; (void)iface;
     if (g_str_equal(method, "GetUserRecordByUID")) {
         guint uid; g_variant_get(params,"(u)",&uid); pw=getpwuid((uid_t)uid);
         if (pw) { return_user_record(self,inv,pw); return; } goto no_home;
     }
     if (g_str_equal(method, "GetUserRecordByName")) {
-        const gchar *name; g_variant_get(params,"(&s)",&name); pw=getpwnam(name);
+        const gchar *name; g_variant_get(params,"(&s)",&name);
+        pw = caller_uid != NULL ? getpwuid((uid_t) *caller_uid) : getpwnam(name);
         if (pw) { return_user_record(self,inv,pw); return; } goto no_home;
     }
     if (g_str_equal(method, "GetUserRecordByPID")) {
@@ -170,7 +170,8 @@ static void method_call_unlocked(GDBusConnection *conn, const gchar *sender, con
         if (pw) { return_user_record_by_pid(inv,pw); return; } goto no_user;
     }
     if (g_str_equal(method, "GetHomeByName")) {
-        const gchar *name; GError *e=NULL; g_variant_get(params,"(&s)",&name); pw=getpwnam(name);
+        const gchar *name; GError *e=NULL; g_variant_get(params,"(&s)",&name);
+        pw = caller_uid != NULL ? getpwuid((uid_t) *caller_uid) : getpwnam(name);
         if (!pw) goto no_home;
         if (!register_home_entry(self,pw,&e)) { g_dbus_method_invocation_return_gerror(inv,e); g_clear_error(&e); return; }
         return_home(inv,pw,TRUE); return;
@@ -232,7 +233,7 @@ home_record_property(uid_t uid, gboolean json, GError **error)
                                    "No NSS account exists for this home", NULL);
     else if (json) {
         g_autofree gchar *record = user_record_json(user);
-        value = g_variant_new("(sb)", record, TRUE);
+        value = g_variant_new("(sb)", record, FALSE);
     } else {
         value = g_variant_new("(suusss)", user->pw_name ? user->pw_name : "",
                               (guint32) user->pw_uid, (guint32) user->pw_gid,
@@ -262,12 +263,40 @@ static GVariant *home_get_property(GDBusConnection *c,const gchar *s,const gchar
 static void method_call(GDBusConnection *conn, const gchar *sender,
  const gchar *obj, const gchar *iface, const gchar *method, GVariant *params,
  GDBusMethodInvocation *inv, gpointer data) {
+    guint32 caller_uid;
+    const guint32 *lookup_uid = NULL;
+    (void) obj;
+    (void) iface;
+
+    /* An empty name selects the account authenticated by the system bus. */
+    if (g_str_equal(method, "GetHomeByName") || g_str_equal(method, "GetUserRecordByName")) {
+        const gchar *name;
+        g_variant_get(params, "(&s)", &name);
+        if (*name == '\0') {
+            if (sender == NULL) {
+                g_dbus_method_invocation_return_error_literal(inv, G_DBUS_ERROR,
+                    G_DBUS_ERROR_ACCESS_DENIED, "The caller has no system bus identity");
+                return;
+            }
+            g_autoptr(GError) error = NULL;
+            g_autoptr(GVariant) reply = g_dbus_connection_call_sync(conn,
+                "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+                "GetConnectionUnixUser", g_variant_new("(s)", sender),
+                G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &error);
+            if (reply == NULL) {
+                g_dbus_method_invocation_return_gerror(inv, error);
+                return;
+            }
+            g_variant_get(reply, "(u)", &caller_uid);
+            lookup_uid = &caller_uid;
+        }
+    }
     if (!rcl_nss_lock_timeout(1000)) {
         g_dbus_method_invocation_return_error(inv, G_DBUS_ERROR,
             G_DBUS_ERROR_FAILED, "NSS is busy; retry the request");
         return;
     }
-    method_call_unlocked(conn, sender, obj, iface, method, params, inv, data);
+    method_call_unlocked(method, params, lookup_uid, inv, data);
     rcl_nss_unlock();
 }
 

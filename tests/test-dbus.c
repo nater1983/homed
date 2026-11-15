@@ -276,7 +276,7 @@ assert_user_record(Fixture *fixture, GVariant *reply)
     gboolean incomplete;
 
     g_variant_get(reply, "(&sb&o)", &json, &incomplete, &path);
-    g_assert_true(incomplete);
+    g_assert_false(incomplete);
     assert_user_record_json(json);
 
     g_autoptr(GVariant) unix_record = read_home_property(fixture, path, "UnixRecord");
@@ -291,7 +291,7 @@ assert_user_record(Fixture *fixture, GVariant *reply)
     g_autoptr(GVariant) record = read_home_property(fixture, path, "UserRecord");
     g_assert_true(g_variant_is_of_type(record, G_VARIANT_TYPE("(sb)")));
     g_variant_get(record, "(&sb)", &property_json, &incomplete);
-    g_assert_true(incomplete);
+    g_assert_false(incomplete);
     g_assert_cmpstr(property_json, ==, json);
 }
 
@@ -337,6 +337,30 @@ test_record_by_uid(Fixture *fixture, gconstpointer data)
     g_assert_nonnull(reply);
     assert_user_record(fixture, reply);
     g_variant_unref(reply);
+}
+
+static void
+test_record_by_caller(Fixture *fixture, gconstpointer data)
+{
+    g_autoptr(GError) error = NULL;
+    (void) data;
+    g_autoptr(GVariant) expected = call_manager(fixture, "GetUserRecordByUID",
+        g_variant_new("(u)", (guint32) geteuid()), G_VARIANT_TYPE("(sbo)"), &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(expected);
+    g_autoptr(GVariant) actual = call_manager(fixture, "GetUserRecordByName",
+        g_variant_new("(s)", ""), G_VARIANT_TYPE("(sbo)"), &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(actual);
+    g_assert_true(g_variant_equal(expected, actual));
+
+    g_autoptr(GVariant) record_path = g_variant_get_child_value(actual, 2);
+    g_autoptr(GVariant) home = call_manager(fixture, "GetHomeByName",
+        g_variant_new("(s)", ""), G_VARIANT_TYPE("(usussso)"), &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(home);
+    g_autoptr(GVariant) home_path = g_variant_get_child_value(home, 6);
+    g_assert_true(g_variant_equal(record_path, home_path));
 }
 
 static void
@@ -682,6 +706,8 @@ main(int argc, char **argv)
                test_nss_lock_contention, teardown);
     g_test_add("/dbus/record-by-uid", Fixture, NULL, setup,
                test_record_by_uid, teardown);
+    g_test_add("/dbus/record-by-caller", Fixture, NULL, setup,
+               test_record_by_caller, teardown);
     g_test_add("/dbus/record-by-pid", Fixture, NULL, setup,
                test_record_by_pid, teardown);
     g_test_add("/dbus/missing-user", Fixture, NULL, setup,
