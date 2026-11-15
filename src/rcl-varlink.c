@@ -624,9 +624,13 @@ dispatch_request(GOutputStream *output, const gchar *data, GError **error)
     if (json_object_has_member(request, "more")) {
         JsonNode *more = json_object_get_member(request, "more");
 
-        if (more != NULL && JSON_NODE_HOLDS_VALUE(more) &&
-            json_node_get_value_type(more) == G_TYPE_BOOLEAN)
-            allow_multiple = json_node_get_boolean(more);
+        if (more == NULL || !JSON_NODE_HOLDS_VALUE(more) ||
+            json_node_get_value_type(more) != G_TYPE_BOOLEAN) {
+            success = send_error(output, "org.varlink.service.InvalidParameter",
+                                 error);
+            goto out;
+        }
+        allow_multiple = json_node_get_boolean(more);
     }
 
     if (g_str_equal(method, "org.varlink.service.GetInfo")) {
