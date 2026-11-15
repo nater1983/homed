@@ -313,6 +313,28 @@ group_lookup(JsonObject *parameters, GOutputStream *output, GError **error)
     return send_group_record(output, group, error);
 }
 
+#ifdef HOMED_TESTING
+static gint test_group_list_failure;
+
+void
+rcl_varlink_test_fail_group_list(gboolean enabled)
+{
+    g_atomic_int_set(&test_group_list_failure, enabled);
+}
+#endif
+
+static int
+lookup_group_list(const gchar *name, gid_t primary_gid, gid_t *groups, int *count)
+{
+#ifdef HOMED_TESTING
+    if (g_atomic_int_get(&test_group_list_failure)) {
+        errno = EIO;
+        return -1;
+    }
+#endif
+    return getgrouplist(name, primary_gid, groups, count);
+}
+
 /* Distinguish an empty membership list from an NSS lookup failure. */
 static GArray *
 get_user_groups(const gchar *user_name, gid_t primary_gid)
@@ -325,7 +347,7 @@ get_user_groups(const gchar *user_name, gid_t primary_gid)
     for (guint attempt = 0; attempt < 4; attempt++) {
         int count = allocated;
         groups = g_renew(gid_t, groups, allocated);
-        if (getgrouplist(user_name, primary_gid, groups, &count) >= 0) {
+        if (lookup_group_list(user_name, primary_gid, groups, &count) >= 0) {
             result = g_array_new(FALSE, FALSE, sizeof(gid_t));
             for (int i = 0; i < count; i++) {
                 gboolean found = FALSE;
@@ -349,21 +371,24 @@ get_user_groups(const gchar *user_name, gid_t primary_gid)
     return result;
 }
 
+/* FALSE means NSS failed; membership is returned separately. */
 static gboolean
-user_is_member(const gchar *user_name, gid_t primary_gid, gid_t group_gid)
+user_is_member(const gchar *user_name, gid_t primary_gid, gid_t group_gid,
+               gboolean *member)
 {
     GArray *groups = get_user_groups(user_name, primary_gid);
-    gboolean found = FALSE;
+    *member = FALSE;
+    if (groups == NULL)
+        return FALSE;
 
-    for (guint i = 0; groups != NULL && i < groups->len; i++) {
+    for (guint i = 0; i < groups->len; i++) {
         if (g_array_index(groups, gid_t, i) == group_gid) {
-            found = TRUE;
+            *member = TRUE;
             break;
         }
     }
-    if (groups != NULL)
-        g_array_unref(groups);
-    return found;
+    g_array_unref(groups);
+    return TRUE;
 }
 
 typedef struct {
@@ -469,7 +494,13 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
         gid_t target_gid = group->gr_gid;
         gchar *resolved_group = g_strdup(group->gr_name);
 
-        if (user_is_member(resolved_user, primary_gid, target_gid))
+        gboolean is_member = FALSE;
+        if (!user_is_member(resolved_user, primary_gid, target_gid,
+                            &is_member)) {
+            g_free(resolved_group);
+            goto nss_unavailable;
+        }
+        if (is_member)
             add_membership(memberships, resolved_user, resolved_group);
 
         g_free(resolved_group);
@@ -478,13 +509,8 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
         gid_t primary_gid = resolved_primary_gid;
         GArray *groups = get_user_groups(resolved_user, primary_gid);
 
-        if (groups == NULL) {
-            g_ptr_array_unref(memberships);
-            g_free(group_name);
-            g_free(user_name);
-            g_free(resolved_user_name);
-            return send_error(output, USER_DATABASE ".ServiceNotAvailable", error);
-        }
+        if (groups == NULL)
+            goto nss_unavailable;
 
         for (guint i = 0; i < groups->len; i++) {
             gid_t gid = g_array_index(groups, gid_t, i);
@@ -512,8 +538,14 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
 
         for (guint i = 0; i < users->len; i++) {
             UserIdentity *identity = g_ptr_array_index(users, i);
-            if (user_is_member(identity->name, identity->primary_gid,
-                               target_gid))
+            gboolean is_member = FALSE;
+            if (!user_is_member(identity->name, identity->primary_gid,
+                                target_gid, &is_member)) {
+                g_free(target_group);
+                g_ptr_array_unref(users);
+                goto nss_unavailable;
+            }
+            if (is_member)
                 add_membership(memberships, identity->name, target_group);
         }
         g_free(target_group);
@@ -526,6 +558,13 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
     g_free(user_name);
     g_free(resolved_user_name);
     return success;
+
+nss_unavailable:
+    g_ptr_array_unref(memberships);
+    g_free(group_name);
+    g_free(user_name);
+    g_free(resolved_user_name);
+    return send_error(output, USER_DATABASE ".ServiceNotAvailable", error);
 }
 
 static gboolean
