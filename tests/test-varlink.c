@@ -656,10 +656,34 @@ test_concurrent_requests(Fixture *unused, gconstpointer data)
     g_assert_cmpint(g_atomic_int_get(&worker.failures), ==, 0);
 }
 
+static void
+test_empty_frame(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    GSocketConnection *connection = connect_socket();
+    GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
+    GInputStream *input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
+    const guint8 empty = 0;
+    GError *error = NULL;
+    g_assert_true(g_output_stream_write_all(output, &empty, 1, NULL, NULL, &error));
+    g_assert_no_error(error);
+    gchar *reply = read_reply(input);
+    g_assert_nonnull(strstr(reply, "org.varlink.service.InvalidParameter"));
+    g_free(reply);
+    reply = exchange(connection, "{\\"method\\":\\"org.varlink.service.GetInfo\\",\\"parameters\\":{}}");
+    g_assert_nonnull(strstr(reply, "\\"product\\":\\"homed\\""));
+    g_free(reply);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
+
 int
 main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
+    g_test_add("/varlink/empty-frame", Fixture, NULL, setup,
+               test_empty_frame, teardown);
     g_test_add("/varlink/invalid-more-type", Fixture, NULL, setup,
                test_invalid_more_type, teardown);
     g_test_add("/varlink/get-info", Fixture, NULL, setup,
