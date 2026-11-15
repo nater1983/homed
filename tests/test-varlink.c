@@ -854,6 +854,68 @@ test_worker_limit_recovery(Fixture *unused, gconstpointer data)
     }
 }
 
+/* Verify shutdown wakes every idle worker without waiting for clients to
+ * disconnect first.  The fixture teardown tolerates an already stopped
+ * listener. */
+static void
+test_shutdown_saturated(Fixture *unused, gconstpointer data)
+{
+    enum { LIMIT = 128 };
+    GSocketConnection *held[LIMIT] = { NULL };
+    (void) unused; (void) data;
+
+    for (guint i = 0; i < LIMIT; i++) {
+        gchar *reply;
+        held[i] = connect_socket();
+        reply = exchange(held[i],
+            "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{}}");
+        assert_reply_contains(reply, "\"product\":\"homed\"");
+        g_free(reply);
+    }
+    rcl_varlink_stop(fixture.service);
+    fixture.service = NULL;
+    for (guint i = 0; i < LIMIT; i++) {
+        guint8 byte;
+        GError *error = NULL;
+        GSocket *socket = g_socket_connection_get_socket(held[i]);
+        g_socket_set_timeout(socket, 5);
+        gssize count = g_input_stream_read(
+            g_io_stream_get_input_stream(G_IO_STREAM(held[i])),
+            &byte, 1, NULL, &error);
+        g_assert_no_error(error);
+        g_assert_cmpint(count, ==, 0);
+        g_io_stream_close(G_IO_STREAM(held[i]), NULL, NULL);
+        g_object_unref(held[i]);
+    }
+}
+
+/* Repeat full admission and retirement to catch stale per-UID counters or
+ * worker slots after a previous saturation cycle. */
+static void
+test_repeated_saturation(Fixture *unused, gconstpointer data)
+{
+    enum { LIMIT = 128, CYCLES = 3 };
+    (void) unused; (void) data;
+
+    for (guint cycle = 0; cycle < CYCLES; cycle++) {
+        GSocketConnection *held[LIMIT] = { NULL };
+        for (guint i = 0; i < LIMIT; i++) {
+            gchar *reply;
+            held[i] = connect_socket();
+            reply = exchange(held[i],
+                "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{}}");
+            assert_reply_contains(reply, "\"product\":\"homed\"");
+            g_free(reply);
+        }
+        for (guint i = 0; i < LIMIT; i++) {
+            g_io_stream_close(G_IO_STREAM(held[i]), NULL, NULL);
+            g_object_unref(held[i]);
+        }
+        /* Worker cleanup runs asynchronously. */
+        g_usleep(200000);
+    }
+}
+
 int
 main(int argc, char **argv)
 {
@@ -912,5 +974,9 @@ main(int argc, char **argv)
                test_concurrent_requests, teardown);
     g_test_add("/varlink/worker-limit-recovery", Fixture, NULL, setup,
                test_worker_limit_recovery, teardown);
+    g_test_add("/varlink/shutdown-saturated", Fixture, NULL, setup,
+               test_shutdown_saturated, teardown);
+    g_test_add("/varlink/repeated-saturation", Fixture, NULL, setup,
+               test_repeated_saturation, teardown);
     return g_test_run();
 }
