@@ -678,10 +678,66 @@ test_empty_frame(Fixture *unused, gconstpointer data)
 }
 
 
+
+static void
+test_oversized_frame(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    GSocketConnection *connection = connect_socket();
+    GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
+    GInputStream *input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
+    GError *error = NULL;
+    /* One byte beyond the maximum accepted 1 MiB payload. */
+    gchar *payload = g_malloc0(1024U * 1024U + 2);
+    memset(payload, 'x', 1024U * 1024U + 1);
+    g_assert_true(g_output_stream_write_all(output, payload,
+                                            1024U * 1024U + 1,
+                                            NULL, NULL, &error));
+    g_assert_no_error(error);
+    gchar *reply = read_reply(input);
+    assert_reply_contains(reply, "org.varlink.service.InvalidParameter");
+    g_free(reply);
+    guint8 byte;
+    gssize count = g_input_stream_read(input, &byte, 1, NULL, &error);
+    g_assert_no_error(error);
+    g_assert_cmpint(count, ==, 0);
+    g_free(payload);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
+static void
+test_incomplete_frame_disconnect(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    GSocketConnection *connection = connect_socket();
+    GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
+    GError *error = NULL;
+    const gchar *partial = "{\"method\":\"org.varlink.service.GetInfo\"";
+    g_assert_true(g_output_stream_write_all(output, partial, strlen(partial),
+                                            NULL, NULL, &error));
+    g_assert_no_error(error);
+    /* EOF before the NUL terminator must not dispatch the partial request. */
+    g_assert_true(g_socket_shutdown(g_socket_connection_get_socket(connection),
+                                    FALSE, TRUE, &error));
+    g_assert_no_error(error);
+    GInputStream *input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
+    guint8 byte;
+    gssize count = g_input_stream_read(input, &byte, 1, NULL, &error);
+    g_assert_no_error(error);
+    g_assert_cmpint(count, ==, 0);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    g_object_unref(connection);
+}
+
 int
 main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
+    g_test_add("/varlink/oversized-frame", Fixture, NULL, setup,
+               test_oversized_frame, teardown);
+    g_test_add("/varlink/incomplete-frame-disconnect", Fixture, NULL, setup,
+               test_incomplete_frame_disconnect, teardown);
     g_test_add("/varlink/empty-frame", Fixture, NULL, setup,
                test_empty_frame, teardown);
     g_test_add("/varlink/invalid-more-type", Fixture, NULL, setup,
