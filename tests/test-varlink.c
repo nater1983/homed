@@ -749,6 +749,10 @@ test_disconnect_recovery(Fixture *unused, gconstpointer data)
         g_assert_true(g_io_stream_close(G_IO_STREAM(connection), NULL, &error));
         g_assert_no_error(error);
         g_object_unref(connection);
+        /* Allow the listener to accept and retire the closed connection.
+         * A tight burst can exhaust the Unix socket's accept backlog,
+         * which tests backlog capacity rather than disconnect recovery. */
+        g_usleep(20000);
     }
 
     /* A subsequent connection must still serve a valid request. */
