@@ -313,39 +313,36 @@ group_lookup(JsonObject *parameters, GOutputStream *output, GError **error)
     return send_group_record(output, group, error);
 }
 
+/* Distinguish an empty membership list from an NSS lookup failure. */
 static GArray *
 get_user_groups(const gchar *user_name, gid_t primary_gid)
 {
     int allocated = 16;
-    int count = allocated;
-    gid_t *groups = g_new(gid_t, allocated);
-    GArray *result = g_array_new(FALSE, FALSE, sizeof(gid_t));
+    gid_t *groups = NULL;
+    GArray *result = NULL;
 
-    if (getgrouplist(user_name, primary_gid, groups, &count) < 0) {
-        if (count <= allocated) {
-            g_free(groups);
-            return result;
-        }
-
-        allocated = count;
+    /* NSS may report a larger required count on successive attempts. */
+    for (guint attempt = 0; attempt < 4; attempt++) {
+        int count = allocated;
         groups = g_renew(gid_t, groups, allocated);
-        count = allocated;
-        if (getgrouplist(user_name, primary_gid, groups, &count) < 0) {
-            g_free(groups);
-            return result;
-        }
-    }
-
-    for (int i = 0; i < count; i++) {
-        gboolean found = FALSE;
-        for (guint j = 0; j < result->len; j++) {
-            if (g_array_index(result, gid_t, j) == groups[i]) {
-                found = TRUE;
-                break;
+        if (getgrouplist(user_name, primary_gid, groups, &count) >= 0) {
+            result = g_array_new(FALSE, FALSE, sizeof(gid_t));
+            for (int i = 0; i < count; i++) {
+                gboolean found = FALSE;
+                for (guint j = 0; j < result->len; j++) {
+                    if (g_array_index(result, gid_t, j) == groups[i]) {
+                        found = TRUE;
+                        break;
+                    }
+                }
+                if (!found)
+                    g_array_append_val(result, groups[i]);
             }
+            break;
         }
-        if (!found)
-            g_array_append_val(result, groups[i]);
+        if (count <= allocated || count <= 0 || count > 65536)
+            break;
+        allocated = count;
     }
 
     g_free(groups);
@@ -358,13 +355,14 @@ user_is_member(const gchar *user_name, gid_t primary_gid, gid_t group_gid)
     GArray *groups = get_user_groups(user_name, primary_gid);
     gboolean found = FALSE;
 
-    for (guint i = 0; i < groups->len; i++) {
+    for (guint i = 0; groups != NULL && i < groups->len; i++) {
         if (g_array_index(groups, gid_t, i) == group_gid) {
             found = TRUE;
             break;
         }
     }
-    g_array_unref(groups);
+    if (groups != NULL)
+        g_array_unref(groups);
     return found;
 }
 
@@ -479,6 +477,14 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
         const gchar *resolved_user = resolved_user_name;
         gid_t primary_gid = resolved_primary_gid;
         GArray *groups = get_user_groups(resolved_user, primary_gid);
+
+        if (groups == NULL) {
+            g_ptr_array_unref(memberships);
+            g_free(group_name);
+            g_free(user_name);
+            g_free(resolved_user_name);
+            return send_error(output, USER_DATABASE ".ServiceNotAvailable", error);
+        }
 
         for (guint i = 0; i < groups->len; i++) {
             gid_t gid = g_array_index(groups, gid_t, i);
