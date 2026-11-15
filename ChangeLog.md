@@ -2,6 +2,8 @@
 
 ## 0.4.0
 
+- Bounded `getgrouplist()` buffer-growth retries and distinguished NSS supplementary-group lookup failures from successful empty results in user membership queries.
+
 - Hardened NSS membership lookups by snapshotting the resolved passwd identity before subsequent group lookups, avoiding reliance on NSS-owned record storage across calls.
 - Added regression coverage for combined user-and-group membership requests.
 
