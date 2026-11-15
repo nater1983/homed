@@ -1,17 +1,16 @@
 #include "rcl-varlink.h"
 #include "config.h"
 #include "rcl-nss.h"
-#include "rcl-varlink-limits.h"
-
-#include <gio/gunixsocketaddress.h>
+#include "rcl-varlink-server.h"
 #include <glib/gstdio.h>
+#include "rcl-varlink-protocol.h"
+
 #include <json-glib/json-glib.h>
 
 #include <errno.h>
 #include <grp.h>
 #include <pwd.h>
 #include <string.h>
-#include <sys/stat.h>
 
 #define VARLINK_DIRECTORY "/run/systemd/userdb"
 #define VARLINK_SOCKET VARLINK_DIRECTORY "/io.systemd.Home"
@@ -670,36 +669,9 @@ out:
     return success;
 }
 
-typedef struct {
-    GMutex mutex;
-    GCond drained;
-    GList *connections; /* Owned references, protected by mutex. */
-    gboolean stopping;
-    RclVarlinkLimits *limits;
-} VarlinkWorkers;
-
-typedef struct {
-    VarlinkWorkers *workers;
-    GSocketConnection *connection;
-    uid_t uid;
-} VarlinkWorker;
-
-static void
-varlink_workers_free(gpointer data)
+void
+rcl_varlink_serve_connection(GSocketConnection *connection)
 {
-    VarlinkWorkers *workers = data;
-    g_assert(workers->connections == NULL);
-    rcl_varlink_limits_free(workers->limits);
-    g_cond_clear(&workers->drained);
-    g_mutex_clear(&workers->mutex);
-    g_free(workers);
-}
-
-static gpointer
-serve_connection(gpointer data)
-{
-    VarlinkWorker *worker = data;
-    GSocketConnection *connection = worker->connection;
     GInputStream *input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
     GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
     GByteArray *request = g_byte_array_new();
@@ -708,206 +680,41 @@ serve_connection(gpointer data)
 
     for (;;) {
         gssize bytes_read = g_input_stream_read(input, &byte, 1, NULL, &error);
-
         if (bytes_read <= 0)
             break;
-
         if (byte == '\0') {
             const guint8 terminator = 0;
-
             if (request->len == 0) {
                 if (!send_error(output, "org.varlink.service.InvalidParameter",
                                 &error))
                     break;
                 continue;
             }
-
             g_byte_array_append(request, &terminator, 1);
-
             if (!dispatch_request(output, (const gchar *) request->data,
                                   &error) || error != NULL)
                 break;
-
-            /* Varlink permits multiple NUL-terminated calls per connection. */
             g_byte_array_set_size(request, 0);
             continue;
         }
-
         if (request->len >= MAX_REQUEST_SIZE) {
-            /* The oversized frame cannot be parsed or resynchronized safely.
-             * Send a protocol error, then close this connection. */
-            if (!send_error(output, "org.varlink.service.InvalidParameter",
-                            &error))
-                break;
+            send_error(output, "org.varlink.service.InvalidParameter", &error);
             break;
         }
-
         g_byte_array_append(request, &byte, 1);
     }
-
     if (error != NULL) {
         g_warning("Varlink request failed: %s", error->message);
         g_error_free(error);
     }
-
     g_byte_array_unref(request);
-    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-
-    g_mutex_lock(&worker->workers->mutex);
-    rcl_varlink_limits_release(worker->workers->limits, worker->uid);
-    worker->workers->connections =
-        g_list_remove(worker->workers->connections, connection);
-    if (worker->workers->connections == NULL)
-        g_cond_signal(&worker->workers->drained);
-    g_mutex_unlock(&worker->workers->mutex);
-
-    g_object_unref(connection);
-    g_free(worker);
-    return NULL;
-}
-
-static gboolean
-incoming_connection(GSocketService *service, GSocketConnection *connection,
-                    GObject *source_object, gpointer user_data)
-{
-    VarlinkWorkers *workers = user_data;
-    VarlinkWorker *worker;
-    GThread *thread;
-    GError *error = NULL;
-    uid_t uid;
-
-    (void) service;
-    (void) source_object;
-
-    g_mutex_lock(&workers->mutex);
-    if (workers->stopping) {
-        g_mutex_unlock(&workers->mutex);
-        return FALSE;
-    }
-
-    if (!rcl_varlink_limits_acquire(workers->limits, connection, &uid)) {
-        g_mutex_unlock(&workers->mutex);
-        return FALSE;
-    }
-
-    worker = g_new0(VarlinkWorker, 1);
-    worker->workers = workers;
-    worker->uid = uid;
-    worker->connection = g_object_ref(connection);
-    workers->connections = g_list_prepend(workers->connections,
-                                          worker->connection);
-    thread = g_thread_try_new("homed-varlink", serve_connection, worker,
-                              &error);
-    if (thread == NULL) {
-        workers->connections = g_list_remove(workers->connections,
-                                              worker->connection);
-        rcl_varlink_limits_release(workers->limits, uid);
-        g_object_unref(worker->connection);
-        g_free(worker);
-        g_warning("Cannot start Varlink worker: %s",
-                  error != NULL ? error->message : "unknown error");
-        g_clear_error(&error);
-        g_mutex_unlock(&workers->mutex);
-        return FALSE;
-    }
-    g_thread_unref(thread);
-    g_mutex_unlock(&workers->mutex);
-    return TRUE;
 }
 
 GSocketService *
 rcl_varlink_start_at(const gchar *directory, const gchar *socket_path,
-                    GError **error)
+                     GError **error)
 {
-    struct stat status;
-    GSocketService *service;
-    GSocketAddress *address;
-    GSocketAddress *effective_address = NULL;
-    VarlinkWorkers *workers;
-
-    if (g_mkdir_with_parents(directory, 0755) < 0) {
-        g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
-                    "cannot create %s: %s", directory,
-                    g_strerror(errno));
-        return NULL;
-    }
-
-    if (lstat(socket_path, &status) == 0) {
-        GSocket *probe;
-        gboolean connected;
-
-        if (!S_ISSOCK(status.st_mode)) {
-            g_set_error(error, G_IO_ERROR, G_IO_ERROR_EXISTS,
-                        "%s exists and is not a socket", socket_path);
-            return NULL;
-        }
-
-        probe = g_socket_new(G_SOCKET_FAMILY_UNIX, G_SOCKET_TYPE_STREAM,
-                             G_SOCKET_PROTOCOL_DEFAULT, error);
-        if (probe == NULL)
-            return NULL;
-
-        address = g_unix_socket_address_new(socket_path);
-        connected = g_socket_connect(probe, address, NULL, NULL);
-        g_object_unref(address);
-        g_object_unref(probe);
-
-        if (connected) {
-            g_set_error(error, G_IO_ERROR, G_IO_ERROR_ADDRESS_IN_USE,
-                        "another service is listening on %s", socket_path);
-            return NULL;
-        }
-
-        if (g_unlink(socket_path) < 0) {
-            g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
-                        "cannot remove stale socket %s: %s", socket_path,
-                        g_strerror(errno));
-            return NULL;
-        }
-    } else if (errno != ENOENT) {
-        g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
-                    "cannot inspect %s: %s", socket_path,
-                    g_strerror(errno));
-        return NULL;
-    }
-
-    service = g_socket_service_new();
-    address = g_unix_socket_address_new(socket_path);
-
-    if (!g_socket_listener_add_address(G_SOCKET_LISTENER(service), address,
-            G_SOCKET_TYPE_STREAM, G_SOCKET_PROTOCOL_DEFAULT, NULL,
-            &effective_address, error)) {
-        g_object_unref(address);
-        g_object_unref(service);
-        return NULL;
-    }
-
-    g_object_unref(address);
-    g_clear_object(&effective_address);
-
-    if (g_chmod(socket_path, 0666) < 0) {
-        g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
-                    "cannot set permissions on %s: %s", socket_path,
-                    g_strerror(errno));
-        g_socket_listener_close(G_SOCKET_LISTENER(service));
-        g_object_unref(service);
-        g_unlink(socket_path);
-        return NULL;
-    }
-
-    workers = g_new0(VarlinkWorkers, 1);
-    g_mutex_init(&workers->mutex);
-    g_cond_init(&workers->drained);
-    workers->limits = rcl_varlink_limits_new();
-    g_object_set_data_full(G_OBJECT(service), "homed-varlink-workers",
-                           workers, varlink_workers_free);
-    g_signal_connect(service, "incoming", G_CALLBACK(incoming_connection),
-                     workers);
-    g_socket_service_start(service);
-    g_object_set_data_full(G_OBJECT(service), "homed-varlink-socket-path",
-                           g_strdup(socket_path), g_free);
-
-    return service;
+    return rcl_varlink_server_start_at(directory, socket_path, error);
 }
 
 GSocketService *
@@ -919,35 +726,8 @@ rcl_varlink_start(GError **error)
 void
 rcl_varlink_stop(GSocketService *service)
 {
-    const gchar *socket_path = service != NULL
-        ? g_object_get_data(G_OBJECT(service), "homed-varlink-socket-path")
-        : NULL;
-
-    if (service != NULL) {
-        VarlinkWorkers *workers =
-            g_object_get_data(G_OBJECT(service), "homed-varlink-workers");
-
-        g_socket_service_stop(service);
-        g_socket_listener_close(G_SOCKET_LISTENER(service));
-
-        /* Unblock idle readers and wait until every connection worker has
-         * released its reference before destroying the shared state. */
-        g_mutex_lock(&workers->mutex);
-        workers->stopping = TRUE;
-        for (GList *item = workers->connections; item != NULL;
-             item = item->next) {
-            GSocket *socket =
-                g_socket_connection_get_socket(item->data);
-            g_socket_shutdown(socket, TRUE, TRUE, NULL);
-        }
-        while (workers->connections != NULL)
-            g_cond_wait(&workers->drained, &workers->mutex);
-        g_mutex_unlock(&workers->mutex);
-
-        if (socket_path != NULL)
-            g_unlink(socket_path);
-        g_object_unref(service);
-    } else {
+    if (service != NULL)
+        rcl_varlink_server_stop(service);
+    else
         g_unlink(VARLINK_SOCKET);
-    }
 }
