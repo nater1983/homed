@@ -774,6 +774,11 @@ test_shutdown_active_connection(Fixture *unused, gconstpointer data)
     GInputStream *input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
     GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
     GError *error = NULL;
+    /* Ensure the server has accepted this connection before shutdown. */
+    gchar *reply = exchange(connection,
+        "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{}}");
+    assert_reply_contains(reply, "\"product\":\"homed\"");
+    g_free(reply);
     const gchar *partial = "{";
     g_assert_true(g_output_stream_write_all(output, partial, 1,
                                             NULL, NULL, &error));
