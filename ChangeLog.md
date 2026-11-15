@@ -2,6 +2,9 @@
 
 ## 0.4.0
 
+- Propagated supplementary-group NSS failures as `ServiceNotAvailable` in user, combined user/group, and group-filtered membership queries rather than silently reporting missing memberships.
+- Added test-only NSS group lookup failure injection and integration regression coverage for all three membership filter modes, including recovery after the simulated failure.
+
 - Bounded `getgrouplist()` buffer-growth retries and distinguished NSS supplementary-group lookup failures from successful empty results in user membership queries.
 
 - Hardened NSS membership lookups by snapshotting the resolved passwd identity before subsequent group lookups, avoiding reliance on NSS-owned record storage across calls.
