@@ -137,8 +137,14 @@ varlink_service_thread(gpointer data)
 
     if (fixture->varlink_loop != NULL) {
         g_main_loop_run(fixture->varlink_loop);
-        g_main_loop_unref(fixture->varlink_loop);
         rcl_varlink_stop(fixture->varlink_service);
+        fixture->varlink_service = NULL;
+        /* Closing GSocketListener cancels its outstanding async accept.
+         * Dispatch that completion before destroying the owning context. */
+        while (g_main_context_iteration(fixture->varlink_context, FALSE))
+            ;
+        g_main_loop_unref(fixture->varlink_loop);
+        fixture->varlink_loop = NULL;
     }
 
     if (fixture->varlink_directory != NULL)
