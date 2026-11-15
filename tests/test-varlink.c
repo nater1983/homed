@@ -53,6 +53,10 @@ teardown(Fixture *unused, gconstpointer data)
     fixture.service = NULL;
     g_main_loop_quit(fixture.loop);
     g_thread_join(fixture.loop_thread);
+    /* The listener's cancelled async accept must be dispatched on the
+     * default context before the final references are released. */
+    while (g_main_context_iteration(NULL, FALSE))
+        ;
     g_main_loop_unref(fixture.loop);
     g_rmdir(fixture.directory);
     g_clear_pointer(&fixture.socket_path, g_free);
