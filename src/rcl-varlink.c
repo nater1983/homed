@@ -1,6 +1,7 @@
 #include "rcl-varlink.h"
 #include "config.h"
 #include "rcl-nss.h"
+#include "rcl-varlink-limits.h"
 
 #include <gio/gunixsocketaddress.h>
 #include <glib/gstdio.h>
@@ -674,11 +675,13 @@ typedef struct {
     GCond drained;
     GList *connections; /* Owned references, protected by mutex. */
     gboolean stopping;
+    RclVarlinkLimits *limits;
 } VarlinkWorkers;
 
 typedef struct {
     VarlinkWorkers *workers;
     GSocketConnection *connection;
+    uid_t uid;
 } VarlinkWorker;
 
 static void
@@ -686,6 +689,7 @@ varlink_workers_free(gpointer data)
 {
     VarlinkWorkers *workers = data;
     g_assert(workers->connections == NULL);
+    rcl_varlink_limits_free(workers->limits);
     g_cond_clear(&workers->drained);
     g_mutex_clear(&workers->mutex);
     g_free(workers);
@@ -750,6 +754,7 @@ serve_connection(gpointer data)
     g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
 
     g_mutex_lock(&worker->workers->mutex);
+    rcl_varlink_limits_release(worker->workers->limits, worker->uid);
     worker->workers->connections =
         g_list_remove(worker->workers->connections, connection);
     if (worker->workers->connections == NULL)
@@ -768,6 +773,8 @@ incoming_connection(GSocketService *service, GSocketConnection *connection,
     VarlinkWorkers *workers = user_data;
     VarlinkWorker *worker;
     GThread *thread;
+    GError *error = NULL;
+    uid_t uid;
 
     (void) service;
     (void) source_object;
@@ -778,15 +785,33 @@ incoming_connection(GSocketService *service, GSocketConnection *connection,
         return FALSE;
     }
 
+    if (!rcl_varlink_limits_acquire(workers->limits, connection, &uid)) {
+        g_mutex_unlock(&workers->mutex);
+        return FALSE;
+    }
+
     worker = g_new0(VarlinkWorker, 1);
     worker->workers = workers;
+    worker->uid = uid;
     worker->connection = g_object_ref(connection);
     workers->connections = g_list_prepend(workers->connections,
                                           worker->connection);
-    thread = g_thread_new("homed-varlink", serve_connection, worker);
+    thread = g_thread_try_new("homed-varlink", serve_connection, worker,
+                              &error);
+    if (thread == NULL) {
+        workers->connections = g_list_remove(workers->connections,
+                                              worker->connection);
+        rcl_varlink_limits_release(workers->limits, uid);
+        g_object_unref(worker->connection);
+        g_free(worker);
+        g_warning("Cannot start Varlink worker: %s",
+                  error != NULL ? error->message : "unknown error");
+        g_clear_error(&error);
+        g_mutex_unlock(&workers->mutex);
+        return FALSE;
+    }
     g_thread_unref(thread);
     g_mutex_unlock(&workers->mutex);
-
     return TRUE;
 }
 
@@ -873,6 +898,7 @@ rcl_varlink_start_at(const gchar *directory, const gchar *socket_path,
     workers = g_new0(VarlinkWorkers, 1);
     g_mutex_init(&workers->mutex);
     g_cond_init(&workers->drained);
+    workers->limits = rcl_varlink_limits_new();
     g_object_set_data_full(G_OBJECT(service), "homed-varlink-workers",
                            workers, varlink_workers_free);
     g_signal_connect(service, "incoming", G_CALLBACK(incoming_connection),
