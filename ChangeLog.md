@@ -1,5 +1,11 @@
 # ChangeLog
 
+## 0.4.0 — Development (Phase 7)
+
+- Reject Varlink requests with non-boolean `more` fields using `org.varlink.service.InvalidParameter` instead of silently ignoring the invalid value.
+- Add Varlink integration coverage for string, numeric, and null `more` values, and verify the connection remains usable after validation errors.
+
+
 ## 0.4.beta — 2026-11-15
 
 Beta prerelease following the 0.4.alpha development baseline. Slackware validation: 3/3 Meson suites and 33/33 individual tests passed. This is a prerelease; protocol hardening, security review, runtime integration, packaging review, and final release verification remain planned for 0.4.0.
