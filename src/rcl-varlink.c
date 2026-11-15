@@ -2,7 +2,6 @@
 #include "config.h"
 #include "rcl-nss.h"
 #include "rcl-varlink-server.h"
-#include <glib/gstdio.h>
 #include "rcl-varlink-protocol.h"
 
 #include <json-glib/json-glib.h>
@@ -12,8 +11,6 @@
 #include <pwd.h>
 #include <string.h>
 
-#define VARLINK_DIRECTORY "/run/systemd/userdb"
-#define VARLINK_SOCKET VARLINK_DIRECTORY "/io.systemd.Home"
 #define VARLINK_SERVICE "io.systemd.Home"
 #define USER_DATABASE "io.systemd.UserDatabase"
 #define SERVICE_INTERFACE "org.varlink.service"
@@ -806,14 +803,11 @@ rcl_varlink_start_at(const gchar *directory, const gchar *socket_path,
 GSocketService *
 rcl_varlink_start(GError **error)
 {
-    return rcl_varlink_start_at(VARLINK_DIRECTORY, VARLINK_SOCKET, error);
+    return rcl_varlink_server_start("/run", error);
 }
 
 void
 rcl_varlink_stop(GSocketService *service)
 {
-    if (service != NULL)
-        rcl_varlink_server_stop(service);
-    else
-        g_unlink(VARLINK_SOCKET);
+    rcl_varlink_server_stop(service);
 }

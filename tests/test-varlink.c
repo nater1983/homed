@@ -1,5 +1,6 @@
 #include "rcl-nss.h"
 #include "rcl-varlink.h"
+#include "rcl-varlink-server.h"
 #include "config.h"
 
 #include <gio/gunixsocketaddress.h>
@@ -601,6 +602,54 @@ test_listener_path_safety(void)
 }
 
 static void
+test_listener_elogind_alias(void)
+{
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *runtime = g_dir_make_tmp("homed-varlink-elogind-XXXXXX", &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(runtime);
+
+    g_autofree gchar *systemd = g_build_filename(runtime, "systemd", NULL);
+    g_autofree gchar *elogind = g_build_filename(runtime, "elogind", NULL);
+    g_autofree gchar *directory = g_build_filename(elogind, "userdb", NULL);
+    g_autofree gchar *socket_path = g_build_filename(directory, "io.systemd.Home", NULL);
+    g_assert_cmpint(g_mkdir(elogind, 0755), ==, 0);
+    g_assert_cmpint(g_mkdir(directory, 0755), ==, 0);
+    g_assert_cmpint(symlink("elogind", systemd), ==, 0);
+
+    /* The alias must reach the socket-path check in the physical directory. */
+    g_assert_true(g_file_set_contents(socket_path, "keep", -1, &error));
+    g_assert_no_error(error);
+    g_assert_null(rcl_varlink_server_start(runtime, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_EXISTS);
+    g_clear_error(&error);
+
+    g_assert_cmpint(g_chmod(elogind, 0777), ==, 0);
+    g_assert_null(rcl_varlink_server_start(runtime, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+    g_clear_error(&error);
+    g_assert_cmpint(g_chmod(elogind, 0755), ==, 0);
+
+    g_assert_cmpint(g_unlink(systemd), ==, 0);
+    g_assert_cmpint(symlink(elogind, systemd), ==, 0);
+    g_assert_null(rcl_varlink_server_start(runtime, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_EXISTS);
+    g_clear_error(&error);
+
+    g_assert_cmpint(g_unlink(systemd), ==, 0);
+    g_assert_cmpint(symlink("elogind/userdb", systemd), ==, 0);
+    g_assert_null(rcl_varlink_server_start(runtime, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+    g_clear_error(&error);
+
+    g_assert_cmpint(g_unlink(socket_path), ==, 0);
+    g_assert_cmpint(g_unlink(systemd), ==, 0);
+    g_assert_cmpint(g_rmdir(directory), ==, 0);
+    g_assert_cmpint(g_rmdir(elogind), ==, 0);
+    g_assert_cmpint(g_rmdir(runtime), ==, 0);
+}
+
+static void
 test_listener_active_socket(Fixture *unused, gconstpointer data)
 {
     struct stat status;
@@ -1118,6 +1167,7 @@ main(int argc, char **argv)
     g_test_add("/varlink/listener-restart", Fixture, NULL, setup,
                test_listener_restart, teardown);
     g_test_add_func("/varlink/listener-path-safety", test_listener_path_safety);
+    g_test_add_func("/varlink/listener-elogind-alias", test_listener_elogind_alias);
     g_test_add("/varlink/listener-active-socket", Fixture, NULL, setup,
                test_listener_active_socket, teardown);
     g_test_add("/varlink/listener-stale-socket", Fixture, NULL, setup,

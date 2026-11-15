@@ -58,6 +58,38 @@ incoming_connection(GSocketService *service, GSocketConnection *connection,
 }
 
 GSocketService *
+rcl_varlink_server_start(const gchar *runtime_directory, GError **error)
+{
+    if (!check_socket_directory(runtime_directory, FALSE, error))
+        return NULL;
+
+    g_autofree gchar *systemd = g_build_filename(runtime_directory, "systemd", NULL);
+    const gchar *provider_directory = systemd;
+    g_autofree gchar *elogind = NULL;
+    struct stat status;
+
+    /* Slackware exposes elogind's runtime directory through this alias. */
+    if (lstat(systemd, &status) == 0 && S_ISLNK(status.st_mode)) {
+        g_autofree gchar *target = g_file_read_link(systemd, error);
+        if (target == NULL)
+            return NULL;
+
+        elogind = g_build_filename(runtime_directory, "elogind", NULL);
+        if (status.st_uid != geteuid() ||
+            (!g_str_equal(target, "elogind") && !g_str_equal(target, elogind))) {
+            g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                        "unsafe Varlink socket directory: %s", systemd);
+            return NULL;
+        }
+        provider_directory = elogind;
+    }
+
+    g_autofree gchar *directory = g_build_filename(provider_directory, "userdb", NULL);
+    g_autofree gchar *socket_path = g_build_filename(directory, "io.systemd.Home", NULL);
+    return rcl_varlink_server_start_at(directory, socket_path, error);
+}
+
+GSocketService *
 rcl_varlink_server_start_at(const gchar *directory, const gchar *socket_path,
                             GError **error)
 {
