@@ -38,7 +38,9 @@ The `Activate`, `Deactivate`, `Lock`, `Unlock`, and `Resize` methods are declare
 
 The system-bus policy reserves ownership of `org.freedesktop.home1` for root and allows other callers to use the read-only Manager methods, read properties, and use standard introspection and peer methods. The installed Polkit actions and group rule are reserved for future managed-home operations. The daemon currently makes no Polkit authorization calls.
 
-User records currently contain the NSS-derived fields `userName`, `uid`, `gid`, `realName`, `homeDirectory`, `shell`, `service`, and `disposition`. D-Bus records identify their source as `nss`.
+User records contain the NSS-derived fields `userName`, `uid`, `gid`, `realName`, `homeDirectory`, `shell`, `service`, and `disposition`. D-Bus records identify their source as `nss`.
+
+In 0.4.0, `GetUserRecordByName` and `GetUserRecordByUID` return the upstream `sbo` signature: a JSON user record, the `incomplete` flag, and a Home object path. Clients using the previous `a{sv}b` reply must decode the JSON string. The homed-specific `GetUserRecordByPID` still returns `a{sv}b`. Home objects also provide the read-only `UnixRecord` and `UserRecord` properties.
 
 ### Varlink interface
 
@@ -53,6 +55,10 @@ The service implements:
 - `GetUserRecord`
 - `GetGroupRecord`
 - `GetMemberships`
+
+All three methods require `"service":"io.systemd.Home"`. Unsupported lookup
+filters return `InvalidParameter` with the parameter name. Use
+`org.varlink.service.GetInterfaceDescription` to see the supported parameters.
 
 The interface returns records for accounts and groups available through NSS. NSS does not provide the managed-home metadata, secrets, bindings, or signatures required for a complete systemd-homed record, so NSS-derived user and group records are returned with `incomplete=true`. The Varlink provider identifies itself as `io.systemd.Home`.
 

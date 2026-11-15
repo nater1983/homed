@@ -16,8 +16,31 @@
 #define VARLINK_SOCKET VARLINK_DIRECTORY "/io.systemd.Home"
 #define VARLINK_SERVICE "io.systemd.Home"
 #define USER_DATABASE "io.systemd.UserDatabase"
+#define SERVICE_INTERFACE "org.varlink.service"
 #define MAX_REQUEST_SIZE (1024U * 1024U)
 
+static const gchar user_database_description[] =
+    "interface " USER_DATABASE "\n\n"
+    "method GetUserRecord(uid: ?int, userName: ?string, service: string)"
+    " -> (record: object, incomplete: bool)\n"
+    "method GetGroupRecord(gid: ?int, groupName: ?string, service: string)"
+    " -> (record: object, incomplete: bool)\n"
+    "method GetMemberships(userName: ?string, groupName: ?string, service: string)"
+    " -> (userName: string, groupName: string)\n"
+    "error NoRecordFound()\n"
+    "error BadService()\n"
+    "error ServiceNotAvailable()\n"
+    "error ConflictingRecordFound()\n"
+    "error EnumerationNotSupported()\n";
+
+static const gchar service_description[] =
+    "interface " SERVICE_INTERFACE "\n\n"
+    "method GetInfo() -> (vendor: string, product: string, version: string,"
+    " url: string, interfaces: []string)\n"
+    "method GetInterfaceDescription(interface: string) -> (description: string)\n"
+    "error InterfaceNotFound(interface: string)\n"
+    "error MethodNotFound(method: string)\n"
+    "error InvalidParameter(parameter: string)\n";
 
 typedef struct {
     gchar *user_name;
@@ -104,15 +127,30 @@ send_reply(GOutputStream *output, JsonObject *parameters,
 }
 
 static gboolean
-send_error(GOutputStream *output, const gchar *name, GError **error)
+send_error_details(GOutputStream *output, const gchar *name, JsonObject *parameters,
+                   GError **error)
 {
     JsonObject *response = json_object_new_empty();
 
     json_object_set_string_member(response, "error", name);
-    json_object_set_object_member(response, "parameters",
-                                  json_object_new_empty());
+    json_object_set_object_member(response, "parameters", parameters);
 
     return send_json(output, response, error);
+}
+
+static gboolean
+send_error(GOutputStream *output, const gchar *name, GError **error)
+{
+    return send_error_details(output, name, json_object_new_empty(), error);
+}
+
+static gboolean
+send_named_error(GOutputStream *output, const gchar *name, const gchar *key,
+                 const gchar *value, GError **error)
+{
+    JsonObject *parameters = json_object_new_empty();
+    json_object_set_string_member(parameters, key, value);
+    return send_error_details(output, name, parameters, error);
 }
 
 static const gchar *
@@ -160,25 +198,6 @@ get_number(JsonObject *object, const gchar *name, guint64 *value)
 }
 
 static JsonObject *
-make_user_record(const struct passwd *user)
-{
-    JsonObject *record = json_object_new_empty();
-
-    json_object_set_string(record, "userName", user->pw_name);
-    json_object_set_number(record, "uid", (guint64) user->pw_uid);
-    json_object_set_number(record, "gid", (guint64) user->pw_gid);
-    json_object_set_string(record, "realName", user->pw_gecos);
-    json_object_set_string(record, "homeDirectory", user->pw_dir);
-    json_object_set_string(record, "shell",
-        user->pw_shell != NULL && user->pw_shell[0] != '\0'
-            ? user->pw_shell : "/bin/sh");
-    json_object_set_string(record, "service", VARLINK_SERVICE);
-    json_object_set_string(record, "disposition", "regular");
-
-    return record;
-}
-
-static JsonObject *
 make_group_record(const struct group *group)
 {
     JsonObject *record = json_object_new_empty();
@@ -204,7 +223,7 @@ send_user_record(GOutputStream *output, const struct passwd *user,
     JsonObject *parameters = json_object_new_empty();
 
     json_object_set_object_member(parameters, "record",
-                                  make_user_record(user));
+                                  rcl_nss_user_record(user, VARLINK_SERVICE));
     json_object_set_boolean_member(parameters, "incomplete", TRUE);
 
     return send_reply(output, parameters, FALSE, error);
@@ -578,10 +597,60 @@ send_service_info(GOutputStream *output, GError **error)
     json_object_set_string_member(parameters, "version", PACKAGE_VERSION);
     json_object_set_string_member(parameters, "url",
                                   "https://github.com/nater1983/homed");
+    json_array_add_string_element(interfaces, SERVICE_INTERFACE);
     json_array_add_string_element(interfaces, USER_DATABASE);
     json_object_set_array_member(parameters, "interfaces", interfaces);
 
     return send_reply(output, parameters, FALSE, error);
+}
+
+static gboolean
+send_interface_description(GOutputStream *output, JsonObject *request, GError **error)
+{
+    const gchar *interface = get_string(request, "interface");
+    const gchar *description;
+
+    if (interface == NULL)
+        return send_named_error(output, SERVICE_INTERFACE ".InvalidParameter",
+                                "parameter", "interface", error);
+    if (g_str_equal(interface, USER_DATABASE))
+        description = user_database_description;
+    else if (g_str_equal(interface, SERVICE_INTERFACE))
+        description = service_description;
+    else
+        return send_named_error(output, SERVICE_INTERFACE ".InterfaceNotFound",
+                                "interface", interface, error);
+
+    JsonObject *parameters = json_object_new_empty();
+    json_object_set_string_member(parameters, "description", description);
+    return send_reply(output, parameters, FALSE, error);
+}
+
+static const gchar *
+invalid_lookup_parameter(JsonObject *parameters, const gchar *id_key,
+                         const gchar *first_name_key, const gchar *second_name_key)
+{
+    JsonObjectIter iter;
+    const gchar *name;
+    JsonNode *value;
+
+    json_object_iter_init(&iter, parameters);
+    while (json_object_iter_next(&iter, &name, &value)) {
+        if (g_str_equal(name, "service"))
+            continue;
+        if (g_strcmp0(name, id_key) == 0) {
+            guint64 id;
+            if (JSON_NODE_HOLDS_NULL(value) ||
+                (get_number(parameters, name, &id) && id < G_MAXUINT32))
+                continue;
+        } else if (g_str_equal(name, first_name_key) ||
+                   g_strcmp0(name, second_name_key) == 0) {
+            if (JSON_NODE_HOLDS_NULL(value) || get_string(parameters, name) != NULL)
+                continue;
+        }
+        return name;
+    }
+    return NULL;
 }
 
 static gboolean
@@ -593,6 +662,7 @@ dispatch_request(GOutputStream *output, const gchar *data, GError **error)
     JsonObject *parameters;
     const gchar *method;
     const gchar *service;
+    g_autoptr(JsonObject) empty_parameters = NULL;
     gboolean allow_multiple = FALSE;
     gboolean success = FALSE;
 
@@ -612,15 +682,18 @@ dispatch_request(GOutputStream *output, const gchar *data, GError **error)
 
     request = json_node_get_object(root);
     method = get_string(request, "method");
-    if (!json_object_has_member(request, "parameters") ||
-        !JSON_NODE_HOLDS_OBJECT(json_object_get_member(request, "parameters")) ||
-        method == NULL) {
+    JsonNode *parameters_node = json_object_get_member(request, "parameters");
+    if (method == NULL || (parameters_node != NULL &&
+                           !JSON_NODE_HOLDS_OBJECT(parameters_node))) {
         success = send_error(output, "org.varlink.service.InvalidParameter",
                              error);
         goto out;
     }
 
-    parameters = json_object_get_object_member(request, "parameters");
+    if (parameters_node == NULL)
+        empty_parameters = json_object_new_empty();
+    parameters = parameters_node != NULL ? json_node_get_object(parameters_node)
+                                         : empty_parameters;
     if (json_object_has_member(request, "more")) {
         JsonNode *more = json_object_get_member(request, "more");
 
@@ -633,25 +706,38 @@ dispatch_request(GOutputStream *output, const gchar *data, GError **error)
         allow_multiple = json_node_get_boolean(more);
     }
 
-    if (g_str_equal(method, "org.varlink.service.GetInfo")) {
+    if (g_str_equal(method, SERVICE_INTERFACE ".GetInfo")) {
         success = send_service_info(output, error);
+        goto out;
+    }
+    if (g_str_equal(method, SERVICE_INTERFACE ".GetInterfaceDescription")) {
+        success = send_interface_description(output, parameters, error);
         goto out;
     }
 
     service = get_string(parameters, "service");
-    if (g_str_equal(method, USER_DATABASE ".GetUserRecord") ||
-        g_str_equal(method, USER_DATABASE ".GetGroupRecord") ||
+    gboolean user_record = g_str_equal(method, USER_DATABASE ".GetUserRecord");
+    gboolean group_record = g_str_equal(method, USER_DATABASE ".GetGroupRecord");
+    if (user_record || group_record ||
         g_str_equal(method, USER_DATABASE ".GetMemberships")) {
-        if (json_object_has_member(parameters, "service") &&
-            (service == NULL || !g_str_equal(service, VARLINK_SERVICE))) {
+        if (g_strcmp0(service, VARLINK_SERVICE) != 0) {
             success = send_error(output, USER_DATABASE ".BadService", error);
+            goto out;
+        }
+        const gchar *invalid = invalid_lookup_parameter(parameters,
+            user_record ? "uid" : group_record ? "gid" : NULL,
+            group_record ? "groupName" : "userName",
+            user_record || group_record ? NULL : "groupName");
+        if (invalid != NULL) {
+            success = send_named_error(output, SERVICE_INTERFACE ".InvalidParameter",
+                                       "parameter", invalid, error);
         } else if (!rcl_nss_lock_timeout(1000)) {
             success = send_error(output, USER_DATABASE ".ServiceNotAvailable",
                                  error);
         } else {
-            if (g_str_equal(method, USER_DATABASE ".GetUserRecord"))
+            if (user_record)
                 success = user_lookup(parameters, output, error);
-            else if (g_str_equal(method, USER_DATABASE ".GetGroupRecord"))
+            else if (group_record)
                 success = group_lookup(parameters, output, error);
             else
                 success = get_memberships(parameters, output, allow_multiple,
@@ -660,8 +746,8 @@ dispatch_request(GOutputStream *output, const gchar *data, GError **error)
             rcl_nss_unlock();
         }
     } else {
-        success = send_error(output, "org.varlink.service.MethodNotFound",
-                             error);
+        success = send_named_error(output, SERVICE_INTERFACE ".MethodNotFound",
+                                   "method", method, error);
     }
 
 out:

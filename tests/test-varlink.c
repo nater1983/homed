@@ -143,7 +143,7 @@ test_get_info(Fixture *unused, gconstpointer data)
     (void) unused; (void) data;
     GSocketConnection *connection = connect_socket();
     gchar *reply = exchange(connection,
-        "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{}}");
+        "{\"method\":\"org.varlink.service.GetInfo\"}");
     gchar *vendor = g_strdup_printf("\"vendor\":\"%s\"", VARLINK_VENDOR);
     gchar *version = g_strdup_printf("\"version\":\"%s\"", PACKAGE_VERSION);
 
@@ -151,6 +151,7 @@ test_get_info(Fixture *unused, gconstpointer data)
     assert_reply_contains(reply, "\"product\":\"homed\"");
     assert_reply_contains(reply, version);
     assert_reply_contains(reply, "\"io.systemd.UserDatabase\"");
+    assert_reply_contains(reply, "\"org.varlink.service\"");
     assert_reply_contains(reply, "\"continues\":false");
     g_free(vendor);
     g_free(version);
@@ -158,6 +159,57 @@ test_get_info(Fixture *unused, gconstpointer data)
     g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
     g_object_unref(connection);
 }
+
+static void
+test_interface_description(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    g_autoptr(GSocketConnection) connection = connect_socket();
+    const gchar *interfaces[] = { "io.systemd.UserDatabase", "org.varlink.service", "io.example.Missing" };
+    const gchar *expected[] = { "method GetMemberships(", "method GetInterfaceDescription(",
+                                "org.varlink.service.InterfaceNotFound" };
+
+    for (guint i = 0; i < G_N_ELEMENTS(interfaces); i++) {
+        g_autofree gchar *request = g_strdup_printf(
+            "{\"method\":\"org.varlink.service.GetInterfaceDescription\","
+            "\"parameters\":{\"interface\":\"%s\"}}", interfaces[i]);
+        g_autofree gchar *reply = exchange(connection, request);
+        assert_reply_contains(reply, expected[i]);
+        assert_reply_contains(reply, interfaces[i]);
+    }
+}
+
+static void
+test_lookup_parameter_validation(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    g_autoptr(GSocketConnection) connection = connect_socket();
+    const struct {
+        const gchar *method, *parameters, *invalid;
+    } cases[] = {
+        { "GetUserRecord", "\"userName\":\"root\",\"uidMin\":1000", "uidMin" },
+        { "GetUserRecord", "\"uid\":-1", "uid" },
+        { "GetUserRecord", "\"uid\":4294967296", "uid" },
+        { "GetGroupRecord", "\"groupName\":\"root\",\"fuzzyNames\":[]", "fuzzyNames" },
+        { "GetMemberships", "\"userName\":true,\"groupName\":\"root\"", "userName" },
+    };
+    for (guint i = 0; i < G_N_ELEMENTS(cases); i++) {
+        g_autofree gchar *request = g_strdup_printf(
+            "{\"method\":\"io.systemd.UserDatabase.%s\","
+            "\"parameters\":{\"service\":\"io.systemd.Home\",%s}}",
+            cases[i].method, cases[i].parameters);
+        g_autofree gchar *reply = exchange(connection, request);
+        g_autofree gchar *detail = g_strdup_printf("\"parameter\":\"%s\"", cases[i].invalid);
+        assert_reply_contains(reply, "org.varlink.service.InvalidParameter");
+        assert_reply_contains(reply, detail);
+    }
+
+    g_autofree gchar *reply = exchange(connection,
+        "{\"method\":\"io.systemd.UserDatabase.GetUserRecord\","
+        "\"parameters\":{\"service\":\"io.systemd.Home\",\"uid\":0,\"userName\":null}}");
+    assert_reply_contains(reply, "\"userName\":\"root\"");
+}
+
 static void
 test_user_record(Fixture *unused, gconstpointer data)
 {
@@ -244,15 +296,18 @@ static void
 test_bad_service(Fixture *unused, gconstpointer data)
 {
     (void) unused; (void) data;
-    GSocketConnection *connection = connect_socket();
-    gchar *reply = exchange(connection,
+    g_autoptr(GSocketConnection) connection = connect_socket();
+    const gchar *requests[] = {
         "{\"method\":\"io.systemd.UserDatabase.GetUserRecord\","
-        "\"parameters\":{\"service\":\"wrong\",\"userName\":\"root\"}}");
-
-    assert_reply_contains(reply, "io.systemd.UserDatabase.BadService");
-    g_free(reply);
-    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-    g_object_unref(connection);
+        "\"parameters\":{\"service\":\"wrong\",\"userName\":\"root\"}}",
+        "{\"method\":\"io.systemd.UserDatabase.GetGroupRecord\","
+        "\"parameters\":{\"groupName\":\"root\"}}",
+        "{\"method\":\"io.systemd.UserDatabase.GetMemberships\"}",
+    };
+    for (guint i = 0; i < G_N_ELEMENTS(requests); i++) {
+        g_autofree gchar *reply = exchange(connection, requests[i]);
+        assert_reply_contains(reply, "io.systemd.UserDatabase.BadService");
+    }
 }
 
 static void
@@ -1038,6 +1093,10 @@ main(int argc, char **argv)
                test_invalid_more_type, teardown);
     g_test_add("/varlink/get-info", Fixture, NULL, setup,
                test_get_info, teardown);
+    g_test_add("/varlink/interface-description", Fixture, NULL, setup,
+               test_interface_description, teardown);
+    g_test_add("/varlink/lookup-parameter-validation", Fixture, NULL, setup,
+               test_lookup_parameter_validation, teardown);
     g_test_add("/varlink/user-record", Fixture, NULL, setup,
                test_user_record, teardown);
     g_test_add("/varlink/group-record", Fixture, NULL, setup,

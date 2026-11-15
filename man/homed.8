@@ -53,17 +53,21 @@ Returns the NSS-visible accounts and their basic account information. These
 entries represent NSS accounts, not necessarily managed home areas.
 .TP
 .B GetUserRecordByName(user_name)
-Returns a user-record dictionary derived from NSS fields.
+Returns a JSON user record, an incomplete flag, and the Home object path
+using the D-Bus output signature
+.BR sbo .
 .TP
 .B GetUserRecordByUID(uid)
-Returns a user-record dictionary for the specified UID.
+Returns the same result for the specified UID.
 .TP
 .B GetUserRecordByPID(pid)
 Reads the real UID from the process status file under
 .I /proc
-and returns the corresponding NSS user record.
+and returns the corresponding NSS user-record dictionary with the incomplete
+flag using the D-Bus output signature
+.BR "a{sv}b" .
 .PP
-The user-record dictionary currently includes
+The user record includes
 .BR userName ,
 .BR uid ,
 .BR gid ,
@@ -92,7 +96,15 @@ where
 is the account's numeric UID.
 The
 .B org.freedesktop.home1.Home
-interface exposes read-only account properties. Its lifecycle methods currently
+interface exposes read-only account properties, including
+.B UnixRecord
+with the signature
+.B (suusss)
+and
+.B UserRecord
+with the signature
+.BR (sb) .
+Its lifecycle methods currently
 return
 .B org.freedesktop.home1.NotSupported
 because managed storage and lifecycle operations have not been implemented.

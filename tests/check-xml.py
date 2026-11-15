@@ -63,8 +63,8 @@ for path in sys.argv[1:]:
         required = {
             "GetHomeByName": ("u", "s", "u", "s", "s", "s", "o"),
             "GetHomeByUID": ("s", "s", "u", "s", "s", "s", "o"),
-            "GetUserRecordByUID": ("a{sv}", "b"),
-            "GetUserRecordByName": ("a{sv}", "b"),
+            "GetUserRecordByUID": ("s", "b", "o"),
+            "GetUserRecordByName": ("s", "b", "o"),
             "GetUserRecordByPID": ("a{sv}", "b"),
             "ListHomes": ("a(susussso)",),
         }
@@ -82,4 +82,8 @@ for path in sys.argv[1:]:
         for name in ("Changed", "Removed"):
             if home.find(f"signal[@name='{name}']") is None:
                 raise SystemExit(f"missing Home.{name} signal")
+        for name, signature in (("UnixRecord", "(suusss)"), ("UserRecord", "(sb)")):
+            prop = home.find(f"property[@name='{name}']")
+            if prop is None or prop.get("type") != signature or prop.get("access") != "read":
+                raise SystemExit(f"expected read-only Home.{name} with type {signature}")
     print(f"valid XML: {path}")

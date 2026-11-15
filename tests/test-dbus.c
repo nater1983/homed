@@ -236,20 +236,63 @@ call_manager(Fixture *fixture, const gchar *method, GVariant *parameters,
 }
 
 static void
-assert_user_record(GVariant *reply)
+assert_user_record_json(const gchar *json)
 {
-    GVariant *record = NULL;
-    gboolean incomplete = FALSE;
-    guint32 uid = G_MAXUINT32;
-    const gchar *name = NULL;
+    g_autoptr(JsonParser) parser = json_parser_new();
+    g_autoptr(GError) error = NULL;
 
-    g_variant_get(reply, "(@a{sv}b)", &record, &incomplete);
+    g_assert_true(json_parser_load_from_data(parser, json, -1, &error));
+    g_assert_no_error(error);
+    JsonNode *root = json_parser_get_root(parser);
+    g_assert_true(JSON_NODE_HOLDS_OBJECT(root));
+    JsonObject *record = json_node_get_object(root);
+    g_assert_cmpstr(json_object_get_string_member(record, "userName"), ==, "root");
+    g_assert_cmpint(json_object_get_int_member(record, "uid"), ==, 0);
+    g_assert_cmpstr(json_object_get_string_member(record, "service"), ==, "nss");
+    g_assert_false(json_object_has_member(record, "secret"));
+    g_assert_false(json_object_has_member(record, "privileged"));
+}
+
+static GVariant *
+read_home_property(Fixture *fixture, const gchar *path, const gchar *name)
+{
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GVariant) reply = g_dbus_connection_call_sync(
+        fixture->client, BUS_NAME, path, "org.freedesktop.DBus.Properties", "Get",
+        g_variant_new("(ss)", "org.freedesktop.home1.Home", name),
+        G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(reply);
+    g_autoptr(GVariant) boxed = g_variant_get_child_value(reply, 0);
+    return g_variant_get_variant(boxed);
+}
+
+static void
+assert_user_record(Fixture *fixture, GVariant *reply)
+{
+    const gchar *json, *path, *property_json;
+    const gchar *name, *gecos, *directory, *shell;
+    guint32 uid, gid;
+    gboolean incomplete;
+
+    g_variant_get(reply, "(&sb&o)", &json, &incomplete, &path);
     g_assert_true(incomplete);
-    g_assert_true(g_variant_lookup(record, "userName", "&s", &name));
+    assert_user_record_json(json);
+
+    g_autoptr(GVariant) unix_record = read_home_property(fixture, path, "UnixRecord");
+    g_assert_true(g_variant_is_of_type(unix_record, G_VARIANT_TYPE("(suusss)")));
+    g_variant_get(unix_record, "(&suu&s&s&s)", &name, &uid, &gid,
+                  &gecos, &directory, &shell);
     g_assert_cmpstr(name, ==, "root");
-    g_assert_true(g_variant_lookup(record, "uid", "u", &uid));
     g_assert_cmpuint(uid, ==, 0);
-    g_variant_unref(record);
+    g_assert_cmpstr(directory, !=, "");
+    g_assert_cmpstr(shell, !=, "");
+
+    g_autoptr(GVariant) record = read_home_property(fixture, path, "UserRecord");
+    g_assert_true(g_variant_is_of_type(record, G_VARIANT_TYPE("(sb)")));
+    g_variant_get(record, "(&sb)", &property_json, &incomplete);
+    g_assert_true(incomplete);
+    g_assert_cmpstr(property_json, ==, json);
 }
 
 static void
@@ -261,7 +304,7 @@ test_nss_lock_contention(Fixture *fixture, gconstpointer data)
 
     rcl_nss_lock();
     reply = call_manager(fixture, "GetUserRecordByName",
-        g_variant_new("(s)", "root"), G_VARIANT_TYPE("(a{sv}b)"), &error);
+        g_variant_new("(s)", "root"), G_VARIANT_TYPE("(sbo)"), &error);
     rcl_nss_unlock();
 
     g_assert_null(reply);
@@ -275,11 +318,11 @@ test_record_by_name(Fixture *fixture, gconstpointer data)
 {
     GError *error = NULL;
     GVariant *reply = call_manager(fixture, "GetUserRecordByName",
-        g_variant_new("(s)", "root"), G_VARIANT_TYPE("(a{sv}b)"), &error);
+        g_variant_new("(s)", "root"), G_VARIANT_TYPE("(sbo)"), &error);
     (void) data;
     g_assert_no_error(error);
     g_assert_nonnull(reply);
-    assert_user_record(reply);
+    assert_user_record(fixture, reply);
     g_variant_unref(reply);
 }
 
@@ -288,11 +331,11 @@ test_record_by_uid(Fixture *fixture, gconstpointer data)
 {
     GError *error = NULL;
     GVariant *reply = call_manager(fixture, "GetUserRecordByUID",
-        g_variant_new("(u)", 0u), G_VARIANT_TYPE("(a{sv}b)"), &error);
+        g_variant_new("(u)", 0u), G_VARIANT_TYPE("(sbo)"), &error);
     (void) data;
     g_assert_no_error(error);
     g_assert_nonnull(reply);
-    assert_user_record(reply);
+    assert_user_record(fixture, reply);
     g_variant_unref(reply);
 }
 
@@ -316,11 +359,13 @@ test_missing_user(Fixture *fixture, gconstpointer data)
     GError *error = NULL;
     GVariant *reply = call_manager(fixture, "GetUserRecordByName",
         g_variant_new("(s)", "homed-test-user-that-does-not-exist"),
-        G_VARIANT_TYPE("(a{sv}b)"), &error);
+        G_VARIANT_TYPE("(sbo)"), &error);
     (void) data;
     g_assert_null(reply);
     g_assert_nonnull(error);
     g_assert_true(g_dbus_error_is_remote_error(error));
+    g_autofree gchar *name = g_dbus_error_get_remote_error(error);
+    g_assert_cmpstr(name, ==, "org.freedesktop.home1.NoSuchHome");
     g_clear_error(&error);
 }
 
@@ -549,7 +594,7 @@ mixed_nss_worker(gpointer data)
     for (guint i = 0; i < 20; i++) {
         GError *error = NULL;
         GVariant *reply = call_manager(fixture, "GetUserRecordByName",
-            g_variant_new("(s)", "root"), G_VARIANT_TYPE("(a{sv}b)"), &error);
+            g_variant_new("(s)", "root"), G_VARIANT_TYPE("(sbo)"), &error);
         if (reply == NULL || error != NULL) {
             g_clear_error(&error);
             g_clear_pointer(&reply, g_variant_unref);

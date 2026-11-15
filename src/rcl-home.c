@@ -25,8 +25,8 @@ static GVariant *home_get_property(GDBusConnection *, const gchar *, const gchar
 static const gchar xml[] =
 "<node>"
 "<interface name='org.freedesktop.home1.Manager'>"
-"<method name='GetUserRecordByUID'><arg name='uid' type='u' direction='in'/><arg name='record' type='a{sv}' direction='out'/><arg name='incomplete' type='b' direction='out'/></method>"
-"<method name='GetUserRecordByName'><arg name='user_name' type='s' direction='in'/><arg name='record' type='a{sv}' direction='out'/><arg name='incomplete' type='b' direction='out'/></method>"
+"<method name='GetUserRecordByUID'><arg name='uid' type='u' direction='in'/><arg name='user_record' type='s' direction='out'/><arg name='incomplete' type='b' direction='out'/><arg name='bus_path' type='o' direction='out'/></method>"
+"<method name='GetUserRecordByName'><arg name='user_name' type='s' direction='in'/><arg name='user_record' type='s' direction='out'/><arg name='incomplete' type='b' direction='out'/><arg name='bus_path' type='o' direction='out'/></method>"
 "<method name='GetUserRecordByPID'><arg name='pid' type='u' direction='in'/><arg name='record' type='a{sv}' direction='out'/><arg name='incomplete' type='b' direction='out'/></method>"
 "<method name='GetHomeByName'><arg name='user_name' type='s' direction='in'/><arg name='uid' type='u' direction='out'/><arg name='home_state' type='s' direction='out'/><arg name='gid' type='u' direction='out'/><arg name='real_name' type='s' direction='out'/><arg name='home_directory' type='s' direction='out'/><arg name='shell' type='s' direction='out'/><arg name='bus_path' type='o' direction='out'/></method>"
 "<method name='GetHomeByUID'><arg name='uid' type='u' direction='in'/><arg name='user_name' type='s' direction='out'/><arg name='home_state' type='s' direction='out'/><arg name='gid' type='u' direction='out'/><arg name='real_name' type='s' direction='out'/><arg name='home_directory' type='s' direction='out'/><arg name='shell' type='s' direction='out'/><arg name='bus_path' type='o' direction='out'/></method>"
@@ -38,10 +38,10 @@ static const gchar xml[] =
 "<property name='UserName' type='s' access='read'/><property name='UID' type='u' access='read'/><property name='GID' type='u' access='read'/>"
 "<property name='RealName' type='s' access='read'/><property name='HomeDirectory' type='s' access='read'/><property name='Shell' type='s' access='read'/>"
 "<property name='State' type='s' access='read'/><property name='Service' type='s' access='read'/>"
+"<property name='UnixRecord' type='(suusss)' access='read'/><property name='UserRecord' type='(sb)' access='read'/>"
 "<signal name='Changed'/><signal name='Removed'/></interface></node>";
 
 static gchar *home_object_path(uid_t uid) { return g_strdup_printf("/org/freedesktop/home1/home/_%u", (guint) uid); }
-static const gchar *pw_shell(const struct passwd *pw) { return (pw->pw_shell && *pw->pw_shell) ? pw->pw_shell : "/bin/sh"; }
 
 /*
  * This is an availability check for conventional NSS home directories.
@@ -75,7 +75,7 @@ static gboolean register_home_entry(RclHome *self, const struct passwd *pw, GErr
     h->name = g_strdup(pw->pw_name ? pw->pw_name : "");
     h->real_name = g_strdup(pw->pw_gecos ? pw->pw_gecos : "");
     h->home_directory = g_strdup(pw->pw_dir ? pw->pw_dir : "");
-    h->shell = g_strdup(pw_shell(pw)); h->path = home_object_path(pw->pw_uid);
+    h->shell = g_strdup(rcl_nss_user_shell(pw)); h->path = home_object_path(pw->pw_uid);
     h->registration_id = g_dbus_connection_register_object(self->connection, h->path,
         self->node->interfaces[1], &home_vtable, h, NULL, error);
     if (!h->registration_id) { home_entry_free(h); return FALSE; }
@@ -90,15 +90,39 @@ static void return_home(GDBusMethodInvocation *inv, const struct passwd *pw, gbo
     if (by_name)
         g_dbus_method_invocation_return_value(inv, g_variant_new("(usussso)",
             (guint32)pw->pw_uid, state, (guint32)pw->pw_gid, gecos,
-            pw->pw_dir ? pw->pw_dir : "", pw_shell(pw), path));
+            pw->pw_dir ? pw->pw_dir : "", rcl_nss_user_shell(pw), path));
     else
         g_dbus_method_invocation_return_value(inv, g_variant_new("(ssussso)",
             pw->pw_name ? pw->pw_name : "", state, (guint32)pw->pw_gid,
-            gecos, pw->pw_dir ? pw->pw_dir : "", pw_shell(pw), path));
+            gecos, pw->pw_dir ? pw->pw_dir : "", rcl_nss_user_shell(pw), path));
     g_free(path);
 }
 
-static void return_user_record(GDBusMethodInvocation *inv, const struct passwd *pw) {
+static gchar *
+user_record_json(const struct passwd *user)
+{
+    g_autoptr(JsonNode) node = json_node_new(JSON_NODE_OBJECT);
+    json_node_take_object(node, rcl_nss_user_record(user, "nss"));
+    return json_to_string(node, FALSE);
+}
+
+static void
+return_user_record(RclHome *self, GDBusMethodInvocation *inv, const struct passwd *user)
+{
+    g_autoptr(GError) error = NULL;
+
+    if (!register_home_entry(self, user, &error)) {
+        g_dbus_method_invocation_return_gerror(inv, error);
+        return;
+    }
+
+    const HomeEntry *home = g_hash_table_lookup(self->homes_by_uid,
+                                               GUINT_TO_POINTER((guint) user->pw_uid));
+    g_autofree gchar *json = user_record_json(user);
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(sbo)", json, TRUE, home->path));
+}
+
+static void return_user_record_by_pid(GDBusMethodInvocation *inv, const struct passwd *pw) {
     GVariantBuilder b;
     g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
     g_variant_builder_add(&b, "{sv}", "userName", g_variant_new_string(pw->pw_name ? pw->pw_name : ""));
@@ -106,7 +130,7 @@ static void return_user_record(GDBusMethodInvocation *inv, const struct passwd *
     g_variant_builder_add(&b, "{sv}", "gid", g_variant_new_uint32((guint32)pw->pw_gid));
     g_variant_builder_add(&b, "{sv}", "realName", g_variant_new_string(pw->pw_gecos ? pw->pw_gecos : ""));
     g_variant_builder_add(&b, "{sv}", "homeDirectory", g_variant_new_string(pw->pw_dir ? pw->pw_dir : ""));
-    g_variant_builder_add(&b, "{sv}", "shell", g_variant_new_string(pw_shell(pw)));
+    g_variant_builder_add(&b, "{sv}", "shell", g_variant_new_string(rcl_nss_user_shell(pw)));
     g_variant_builder_add(&b, "{sv}", "service", g_variant_new_string("nss"));
     g_variant_builder_add(&b, "{sv}", "disposition", g_variant_new_string("regular"));
     /* NSS has no managed-storage, binding, secret, or signature metadata. */
@@ -135,15 +159,15 @@ static void method_call_unlocked(GDBusConnection *conn, const gchar *sender, con
     (void)conn; (void)sender; (void)obj; (void)iface;
     if (g_str_equal(method, "GetUserRecordByUID")) {
         guint uid; g_variant_get(params,"(u)",&uid); pw=getpwuid((uid_t)uid);
-        if (pw) { return_user_record(inv,pw); return; } goto no_user;
+        if (pw) { return_user_record(self,inv,pw); return; } goto no_home;
     }
     if (g_str_equal(method, "GetUserRecordByName")) {
         const gchar *name; g_variant_get(params,"(&s)",&name); pw=getpwnam(name);
-        if (pw) { return_user_record(inv,pw); return; } goto no_user;
+        if (pw) { return_user_record(self,inv,pw); return; } goto no_home;
     }
     if (g_str_equal(method, "GetUserRecordByPID")) {
         guint pid; g_variant_get(params,"(u)",&pid); pw=passwd_for_pid((pid_t)pid);
-        if (pw) { return_user_record(inv,pw); return; } goto no_user;
+        if (pw) { return_user_record_by_pid(inv,pw); return; } goto no_user;
     }
     if (g_str_equal(method, "GetHomeByName")) {
         const gchar *name; GError *e=NULL; g_variant_get(params,"(&s)",&name); pw=getpwnam(name);
@@ -168,7 +192,7 @@ static void method_call_unlocked(GDBusConnection *conn, const gchar *sender, con
             }
             g_variant_builder_add(&b,"(susussso)",pw->pw_name ? pw->pw_name : "",
                 (guint32)pw->pw_uid,home_state(pw->pw_dir),(guint32)pw->pw_gid,pw->pw_gecos ? pw->pw_gecos : "",
-                pw->pw_dir ? pw->pw_dir : "",pw_shell(pw),path);
+                pw->pw_dir ? pw->pw_dir : "",rcl_nss_user_shell(pw),path);
             g_free(path);
         }
         endpwent(); g_dbus_method_invocation_return_value(inv,g_variant_new("(a(susussso))",&b)); return;
@@ -191,8 +215,36 @@ static void home_method_call(GDBusConnection *c,const gchar *s,const gchar *o,co
         g_dbus_method_invocation_return_dbus_error(inv,"org.freedesktop.home1.NotSupported","NSS-backed home objects do not have managed storage");
     else g_dbus_method_invocation_return_dbus_error(inv,"org.freedesktop.DBus.Error.UnknownMethod","Unknown Home method");
 }
+
+static GVariant *
+home_record_property(uid_t uid, gboolean json, GError **error)
+{
+    if (!rcl_nss_lock_timeout(1000)) {
+        g_set_error_literal(error, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                            "NSS is busy; retry the request");
+        return NULL;
+    }
+
+    const struct passwd *user = getpwuid(uid);
+    GVariant *value = NULL;
+    if (user == NULL)
+        g_dbus_error_set_dbus_error(error, "org.freedesktop.home1.NoSuchHome",
+                                   "No NSS account exists for this home", NULL);
+    else if (json) {
+        g_autofree gchar *record = user_record_json(user);
+        value = g_variant_new("(sb)", record, TRUE);
+    } else {
+        value = g_variant_new("(suusss)", user->pw_name ? user->pw_name : "",
+                              (guint32) user->pw_uid, (guint32) user->pw_gid,
+                              user->pw_gecos ? user->pw_gecos : "",
+                              user->pw_dir ? user->pw_dir : "", rcl_nss_user_shell(user));
+    }
+    rcl_nss_unlock();
+    return value;
+}
+
 static GVariant *home_get_property(GDBusConnection *c,const gchar *s,const gchar *o,const gchar *i,const gchar *p,GError **e,gpointer d) {
-    HomeEntry *h=d; (void)c;(void)s;(void)o;(void)i;(void)e;
+    HomeEntry *h=d; (void)c;(void)s;(void)o;(void)i;
     if (g_str_equal(p,"UserName")) return g_variant_new_string(h->name);
     if (g_str_equal(p,"UID")) return g_variant_new_uint32((guint32)h->uid);
     if (g_str_equal(p,"GID")) return g_variant_new_uint32((guint32)h->gid);
@@ -201,6 +253,10 @@ static GVariant *home_get_property(GDBusConnection *c,const gchar *s,const gchar
     if (g_str_equal(p,"Shell")) return g_variant_new_string(h->shell);
     if (g_str_equal(p,"State")) return g_variant_new_string(home_state(h->home_directory));
     if (g_str_equal(p,"Service")) return g_variant_new_string("nss");
+    if (g_str_equal(p, "UnixRecord"))
+        return home_record_property(h->uid, FALSE, e);
+    if (g_str_equal(p, "UserRecord"))
+        return home_record_property(h->uid, TRUE, e);
     return NULL;
 }
 static void method_call(GDBusConnection *conn, const gchar *sender,
