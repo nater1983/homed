@@ -684,6 +684,40 @@ mixed_nss_worker(gpointer data)
 }
 
 static void
+test_homectl(Fixture *fixture, gconstpointer data)
+{
+    const gchar *program = data;
+    g_autoptr(GSubprocessLauncher) launcher = g_subprocess_launcher_new(
+        G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_PIPE);
+    g_subprocess_launcher_setenv(launcher, "DBUS_SYSTEM_BUS_ADDRESS",
+                                 g_test_dbus_get_bus_address(fixture->bus), TRUE);
+    const gchar *const commands[][5] = {
+        { program, "--json", "list", NULL },
+        { program, "--json", "inspect", "root", NULL },
+        { program, "--json", "inspect", "0", NULL },
+    };
+    for (guint i = 0; i < G_N_ELEMENTS(commands); i++) {
+        g_autoptr(GError) error = NULL;
+        g_autoptr(GSubprocess) process = g_subprocess_launcher_spawnv(launcher, commands[i], &error);
+        g_assert_no_error(error);
+        g_autofree gchar *output = NULL;
+        g_autofree gchar *diagnostic = NULL;
+        g_assert_true(g_subprocess_communicate_utf8(process, NULL, NULL, &output, &diagnostic, &error));
+        g_assert_no_error(error);
+        g_assert_cmpstr(diagnostic, ==, "");
+        g_assert_true(g_subprocess_get_successful(process));
+        if (i != 0)
+            assert_user_record_json(output);
+        else {
+            g_autoptr(JsonNode) node = json_from_string(output, &error);
+            g_assert_no_error(error);
+            g_assert_true(JSON_NODE_HOLDS_ARRAY(node));
+            g_assert_cmpuint(json_array_get_length(json_node_get_array(node)), >, 0);
+        }
+    }
+}
+
+static void
 test_mixed_nss_concurrency(Fixture *fixture, gconstpointer data)
 {
     enum { THREADS = 8 };
@@ -728,5 +762,8 @@ main(int argc, char **argv)
                test_unsupported_home_operations, teardown);
     g_test_add("/dbus/mixed-nss-concurrency", Fixture, NULL, setup,
                test_mixed_nss_concurrency, teardown);
+    const gchar *homectl = g_getenv("HOMED_TEST_HOMECTL");
+    if (homectl != NULL)
+        g_test_add("/dbus/homectl", Fixture, homectl, setup, test_homectl, teardown);
     return g_test_run();
 }

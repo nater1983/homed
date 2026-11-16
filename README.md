@@ -133,6 +133,7 @@ Tests are enabled by default. To configure without building the test suite, pass
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `tests` | `true` | Build and register the test suite. |
+| `homectl` | `false` | Build and install the read-only client and its manual page. |
 | `privileged-group` | `wheel` | Group used by the installed Polkit rules. |
 | `varlink-vendor` | `N4t3R` | Vendor name reported by `org.varlink.service.GetInfo`. |
 | `dbus_system_service_dir` | empty | Override the D-Bus system service directory. |
@@ -140,6 +141,24 @@ Tests are enabled by default. To configure without building the test suite, pass
 | `polkit_policy_dir` | empty | Override the Polkit action policy directory. |
 
 When an override directory is empty, Meson uses the corresponding directory reported by the installed dependency where available, or the project default.
+
+## Read-only homectl client
+
+Enable the client with `-Dhomectl=true` in Meson or run the SlackBuild with
+`HOMECTL=true`. It installs `homectl` in the configured `bindir` and
+includes `homectl(1)`. The default build leaves the command name available
+for an existing upstream client.
+
+```sh
+homectl list
+homectl inspect nathan
+homectl inspect 1000
+homectl --json inspect root
+homectl --json list
+```
+
+The client reads accounts over the system D-Bus and can run as an ordinary
+user. Use Slackware's account tools to create or modify accounts.
 
 ## Testing the installed service
 

@@ -62,8 +62,11 @@ configure_file(output: 'config.h', configuration: conf)
 config_h_inc = include_directories('.')
 subdir('src')
 install_man('man/homed.8')
+if get_option('homectl')
+  install_man('man/homectl.1')
+endif
 subdir('data')
 if get_option('tests')
   subdir('tests')
 endif
-summary({'Tests': get_option('tests'), 'Privileged group': get_option('privileged-group'), 'Varlink vendor': get_option('varlink-vendor')}, section: 'Configuration')
+summary({'Tests': get_option('tests'), 'homectl': get_option('homectl'), 'Privileged group': get_option('privileged-group'), 'Varlink vendor': get_option('varlink-vendor')}, section: 'Configuration')

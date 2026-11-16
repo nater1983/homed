@@ -1,0 +1,51 @@
+.TH HOMECTL 1
+.SH NAME
+homectl \- list and inspect accounts through homed
+.SH SYNOPSIS
+.B homectl
+.RI [ options ]
+.RB [ list ]
+.br
+.B homectl
+.RI [ options ]
+.B inspect
+.I USER
+.SH DESCRIPTION
+.B homectl
+queries the
+.B org.freedesktop.home1
+service on the system D-Bus.
+It can be run as an ordinary user.
+Account creation and changes use Slackware's existing account tools.
+.SH COMMANDS
+.TP
+.B list
+List accounts returned by the service.
+The default output shows the user name, UID, GID, state, home directory, and
+shell. With
+.BR --json ,
+the output is an array of account summaries.
+This is the default command.
+.TP
+.BI inspect " USER"
+Show the account record for a user name or numeric UID.
+With
+.BR --json ,
+print the user record as a JSON object.
+Use an empty string to select the calling user's account.
+.SH OPTIONS
+.TP
+.BR \-j ", " \-\-json
+Print JSON to standard output.
+.TP
+.BR \-h ", " \-\-help
+Print help.
+.TP
+.B \-\-version
+Print the package version.
+.SH EXIT STATUS
+Zero indicates success, one indicates a lookup or runtime error, and two
+indicates incorrect usage.
+.SH SEE ALSO
+.BR homed (8),
+.BR userdbctl (1)

@@ -34,7 +34,7 @@ find . ! -type l -type f -perm /111 ! -perm 755 -exec chmod -f 755 {} +
 find . ! -type l -type f ! -perm /111 ! -perm 644 -exec chmod -f 644 {} +
 
 export CFLAGS="$SLKCFLAGS"
-meson setup build --prefix=/usr --libdir="lib${LIBDIRSUFFIX}" --libexecdir=/usr/libexec --bindir=/usr/bin --sbindir=/usr/sbin --datadir=/usr/share --sysconfdir=/etc --localstatedir=/var --mandir=/usr/man --buildtype=release -Dtests=true -Dprivileged-group=wheel
+meson setup build --prefix=/usr --libdir="lib${LIBDIRSUFFIX}" --libexecdir=/usr/libexec --bindir=/usr/bin --sbindir=/usr/sbin --datadir=/usr/share --sysconfdir=/etc --localstatedir=/var --mandir=/usr/man --buildtype=release -Dtests=true -Dprivileged-group=wheel -Dhomectl="${HOMECTL:-false}"
 ninja -C build
 meson test -C build --print-errorlogs
 DESTDIR="$PKG" ninja -C build install

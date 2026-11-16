@@ -40,4 +40,11 @@ test_dbus = executable('test-dbus',
   include_directories: [include_directories('../src'), config_h_inc],
   c_args: ['-DHOMED_TESTING'])
 
-test('dbus-integration', test_dbus, timeout: 60)
+dbus_test_env = environment()
+dbus_test_dependencies = []
+if get_option('homectl')
+  dbus_test_env.set('HOMED_TEST_HOMECTL', homectl.full_path())
+  dbus_test_dependencies += [homectl]
+endif
+test('dbus-integration', test_dbus, timeout: 60,
+  env: dbus_test_env, depends: dbus_test_dependencies)

@@ -1,5 +1,9 @@
 # ChangeLog
 
+## Unreleased
+
+- Add an optional read-only `homectl` client for listing and inspecting NSS accounts, with JSON output for both commands.
+
 ## 0.4.rc — 2026-11-15
 
 - Match the upstream read-only D-Bus reply `sbo` for name and UID lookups and expose the `UnixRecord` and `UserRecord` Home properties. An empty name resolves the D-Bus caller. The homed-specific PID lookup retains its `a{sv}b` reply.

@@ -15,3 +15,10 @@ executable('homed', homed_sources,
   install_dir: get_option('libexecdir'),
   gnu_symbol_visibility: 'hidden',
   c_args: ['-DGLIB_DISABLE_DEPRECATION_WARNINGS'])
+
+if get_option('homectl')
+  homectl = executable('homectl', 'homectl.c',
+    dependencies: [glib_dep, gio_dep, json_glib],
+    include_directories: config_h_inc,
+    install: true)
+endif
