@@ -1,5 +1,10 @@
 # ChangeLog
 
+## Unreleased
+
+- Capped Varlink at 128 workers total and 128 connections per UID. SIGTERM and SIGINT stop the listener, remove the socket, and drain active workers.
+- Bounded supplementary-group lookup retries and allocation, preserved NSS identity across lookups, and returned `io.systemd.UserDatabase.ServiceNotAvailable` on group-list failure for all membership filters.
+
 ## 0.3.4 (2026-11-07)
 
 - Backported bounded NSS mutex acquisition from 0.4.0. D-Bus and Varlink requests now return an error when the shared NSS lock cannot be acquired within one second, instead of waiting indefinitely.

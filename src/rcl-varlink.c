@@ -1,4 +1,6 @@
 #include "rcl-varlink.h"
+#include "rcl-varlink-protocol.h"
+#include "rcl-varlink-worker.h"
 #include "rcl-nss.h"
 
 #include <gio/gunixsocketaddress.h>
@@ -312,59 +314,84 @@ group_lookup(JsonObject *parameters, GOutputStream *output, GError **error)
     return send_group_record(output, group, error);
 }
 
+#ifdef HOMED_TESTING
+static gint test_group_list_failure;
+
+void
+rcl_varlink_test_fail_group_list(gboolean enabled)
+{
+    g_atomic_int_set(&test_group_list_failure, enabled);
+}
+#endif
+
+static int
+lookup_group_list(const gchar *name, gid_t primary_gid, gid_t *groups, int *count)
+{
+#ifdef HOMED_TESTING
+    if (g_atomic_int_get(&test_group_list_failure)) {
+        errno = EIO;
+        return -1;
+    }
+#endif
+    return getgrouplist(name, primary_gid, groups, count);
+}
+
+/* Distinguish an empty membership list from an NSS lookup failure. */
 static GArray *
 get_user_groups(const gchar *user_name, gid_t primary_gid)
 {
     int allocated = 16;
-    int count = allocated;
-    gid_t *groups = g_new(gid_t, allocated);
-    GArray *result = g_array_new(FALSE, FALSE, sizeof(gid_t));
+    gid_t *groups = NULL;
+    GArray *result = NULL;
 
-    if (getgrouplist(user_name, primary_gid, groups, &count) < 0) {
-        if (count <= allocated) {
-            g_free(groups);
-            return result;
-        }
-
-        allocated = count;
+    /* NSS may report a larger required count on successive attempts. */
+    for (guint attempt = 0; attempt < 4; attempt++) {
+        int count = allocated;
         groups = g_renew(gid_t, groups, allocated);
-        count = allocated;
-        if (getgrouplist(user_name, primary_gid, groups, &count) < 0) {
-            g_free(groups);
-            return result;
-        }
-    }
-
-    for (int i = 0; i < count; i++) {
-        gboolean found = FALSE;
-        for (guint j = 0; j < result->len; j++) {
-            if (g_array_index(result, gid_t, j) == groups[i]) {
-                found = TRUE;
+        if (lookup_group_list(user_name, primary_gid, groups, &count) >= 0) {
+            if (count < 0 || count > allocated)
                 break;
+            result = g_array_new(FALSE, FALSE, sizeof(gid_t));
+            for (int i = 0; i < count; i++) {
+                gboolean found = FALSE;
+                for (guint j = 0; j < result->len; j++) {
+                    if (g_array_index(result, gid_t, j) == groups[i]) {
+                        found = TRUE;
+                        break;
+                    }
+                }
+                if (!found)
+                    g_array_append_val(result, groups[i]);
             }
+            break;
         }
-        if (!found)
-            g_array_append_val(result, groups[i]);
+        if (count <= allocated || count <= 0 || count > 65536)
+            break;
+        allocated = count;
     }
 
     g_free(groups);
     return result;
 }
 
+/* FALSE means NSS failed; membership is returned separately. */
 static gboolean
-user_is_member(const gchar *user_name, gid_t primary_gid, gid_t group_gid)
+user_is_member(const gchar *user_name, gid_t primary_gid, gid_t group_gid,
+               gboolean *member)
 {
     GArray *groups = get_user_groups(user_name, primary_gid);
-    gboolean found = FALSE;
+    *member = FALSE;
+    if (groups == NULL)
+        return FALSE;
 
     for (guint i = 0; i < groups->len; i++) {
         if (g_array_index(groups, gid_t, i) == group_gid) {
-            found = TRUE;
+            *member = TRUE;
             break;
         }
     }
     g_array_unref(groups);
-    return found;
+    return TRUE;
 }
 
 typedef struct {
@@ -441,8 +468,17 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
                           error);
     }
 
-    if (user_name != NULL)
+    /* NSS may reuse static lookup storage. Snapshot the passwd identity
+     * before looking up a group or performing another NSS operation. */
+    gchar *resolved_user_name = NULL;
+    gid_t resolved_primary_gid = 0;
+    if (user_name != NULL) {
         user = getpwnam(user_name);
+        if (user != NULL) {
+            resolved_user_name = g_strdup(user->pw_name);
+            resolved_primary_gid = user->pw_gid;
+        }
+    }
     if (group_name != NULL)
         group = getgrnam(group_name);
 
@@ -450,25 +486,34 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
         (group_name != NULL && group == NULL)) {
         g_free(group_name);
         g_free(user_name);
+        g_free(resolved_user_name);
         g_ptr_array_unref(memberships);
         return send_error(output, USER_DATABASE ".NoRecordFound", error);
     }
 
     if (user != NULL && group != NULL) {
-        gchar *resolved_user = g_strdup(user->pw_name);
-        gid_t primary_gid = user->pw_gid;
+        const gchar *resolved_user = resolved_user_name;
+        gid_t primary_gid = resolved_primary_gid;
         gid_t target_gid = group->gr_gid;
         gchar *resolved_group = g_strdup(group->gr_name);
 
-        if (user_is_member(resolved_user, primary_gid, target_gid))
+        gboolean is_member = FALSE;
+        if (!user_is_member(resolved_user, primary_gid, target_gid,
+                            &is_member)) {
+            g_free(resolved_group);
+            goto nss_unavailable;
+        }
+        if (is_member)
             add_membership(memberships, resolved_user, resolved_group);
 
         g_free(resolved_group);
-        g_free(resolved_user);
     } else if (user != NULL) {
-        gchar *resolved_user = g_strdup(user->pw_name);
-        gid_t primary_gid = user->pw_gid;
+        const gchar *resolved_user = resolved_user_name;
+        gid_t primary_gid = resolved_primary_gid;
         GArray *groups = get_user_groups(resolved_user, primary_gid);
+
+        if (groups == NULL)
+            goto nss_unavailable;
 
         for (guint i = 0; i < groups->len; i++) {
             gid_t gid = g_array_index(groups, gid_t, i);
@@ -480,7 +525,6 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
             }
         }
         g_array_unref(groups);
-        g_free(resolved_user);
     } else {
         GPtrArray *users = g_ptr_array_new_with_free_func(user_identity_free);
         gid_t target_gid = group->gr_gid;
@@ -497,8 +541,14 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
 
         for (guint i = 0; i < users->len; i++) {
             UserIdentity *identity = g_ptr_array_index(users, i);
-            if (user_is_member(identity->name, identity->primary_gid,
-                               target_gid))
+            gboolean is_member = FALSE;
+            if (!user_is_member(identity->name, identity->primary_gid,
+                                target_gid, &is_member)) {
+                g_free(target_group);
+                g_ptr_array_unref(users);
+                goto nss_unavailable;
+            }
+            if (is_member)
                 add_membership(memberships, identity->name, target_group);
         }
         g_free(target_group);
@@ -509,7 +559,15 @@ get_memberships(JsonObject *parameters, GOutputStream *output,
     g_ptr_array_unref(memberships);
     g_free(group_name);
     g_free(user_name);
+    g_free(resolved_user_name);
     return success;
+
+nss_unavailable:
+    g_ptr_array_unref(memberships);
+    g_free(group_name);
+    g_free(user_name);
+    g_free(resolved_user_name);
+    return send_error(output, USER_DATABASE ".ServiceNotAvailable", error);
 }
 
 static gboolean
@@ -586,10 +644,9 @@ out:
     return success;
 }
 
-static gpointer
-serve_connection(gpointer data)
+void
+rcl_varlink_serve_connection(GSocketConnection *connection)
 {
-    GSocketConnection *connection = data;
     GInputStream *input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
     GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
     GByteArray *request = g_byte_array_new();
@@ -632,27 +689,16 @@ serve_connection(gpointer data)
     }
 
     g_byte_array_unref(request);
-    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-    g_object_unref(connection);
-
-    return NULL;
 }
 
 static gboolean
 incoming_connection(GSocketService *service, GSocketConnection *connection,
                     GObject *source_object, gpointer user_data)
 {
-    GThread *thread;
-
     (void) service;
     (void) source_object;
-    (void) user_data;
 
-    thread = g_thread_new("homed-varlink", serve_connection,
-                          g_object_ref(connection));
-    g_thread_unref(thread);
-
-    return TRUE;
+    return rcl_varlink_workers_accept(user_data, connection);
 }
 
 GSocketService *
@@ -733,8 +779,11 @@ rcl_varlink_start(GError **error)
         return NULL;
     }
 
+    RclVarlinkWorkers *workers = rcl_varlink_workers_new();
+    g_object_set_data_full(G_OBJECT(service), "homed-varlink-workers", workers,
+                           rcl_varlink_workers_free);
     g_signal_connect(service, "incoming", G_CALLBACK(incoming_connection),
-                     NULL);
+                     workers);
     g_socket_service_start(service);
 
     return service;
@@ -743,11 +792,15 @@ rcl_varlink_start(GError **error)
 void
 rcl_varlink_stop(GSocketService *service)
 {
-    if (service != NULL) {
-        g_socket_service_stop(service);
-        g_socket_listener_close(G_SOCKET_LISTENER(service));
-        g_object_unref(service);
-    }
+    if (service == NULL)
+        return;
 
+    RclVarlinkWorkers *workers =
+        g_object_get_data(G_OBJECT(service), "homed-varlink-workers");
+    g_socket_service_stop(service);
+    /* Unlink before draining workers so another listener can take over. */
     g_unlink(VARLINK_SOCKET);
+    g_socket_listener_close(G_SOCKET_LISTENER(service));
+    rcl_varlink_workers_shutdown(workers);
+    g_object_unref(service);
 }
