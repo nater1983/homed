@@ -1,6 +1,55 @@
 #include "rcl-nss.h"
 
+#include <dlfcn.h>
+#include <stdbool.h>
+
+/*
+ * elogind's NSS module provides a thread-local, nestable recursion guard.
+ * Resolve it at runtime: homed must also work on Slackware installations
+ * without libnss_elogind.  Keep the module loaded for the daemon lifetime.
+ *
+ * The guard must be enabled on the thread that performs the NSS lookup;
+ * the process-wide mutex alone cannot prevent a lookup from calling back
+ * through elogind-userdbd into this Varlink provider.
+ */
+typedef int (*NssElogindBlockFunc)(bool);
 static GMutex nss_mutex;
+static NssElogindBlockFunc elogind_block;
+static gsize elogind_block_initialized;
+static GPrivate elogind_block_active = G_PRIVATE_INIT(NULL);
+
+static void
+initialize_elogind_block(void)
+{
+    if (g_once_init_enter(&elogind_block_initialized)) {
+        void *module = dlopen("libnss_elogind.so.2", RTLD_NOW | RTLD_LOCAL);
+        if (module != NULL) {
+            void *symbol = dlsym(module, "_nss_elogind_block");
+            if (symbol != NULL)
+                *(void **) (&elogind_block) = symbol;
+            else
+                dlclose(module);
+        }
+        g_once_init_leave(&elogind_block_initialized, 1);
+    }
+}
+
+static void
+block_elogind_lookups(void)
+{
+    initialize_elogind_block();
+    if (elogind_block != NULL && elogind_block(true) >= 0)
+        g_private_set(&elogind_block_active, GINT_TO_POINTER(1));
+}
+
+static void
+unblock_elogind_lookups(void)
+{
+    if (g_private_get(&elogind_block_active) != NULL) {
+        g_private_set(&elogind_block_active, NULL);
+        (void) elogind_block(false);
+    }
+}
 
 #ifdef HOMED_TESTING
 static RclNssTestCallback test_callback;
@@ -16,6 +65,7 @@ void
 rcl_nss_lock(void)
 {
     g_mutex_lock(&nss_mutex);
+    block_elogind_lookups();
 }
 
 gboolean
@@ -25,6 +75,7 @@ rcl_nss_lock_timeout(guint timeout_ms)
 
     do {
         if (g_mutex_trylock(&nss_mutex)) {
+            block_elogind_lookups();
 #ifdef HOMED_TESTING
             if (test_callback != NULL) {
                 RclNssTestCallback callback = test_callback;
@@ -37,12 +88,16 @@ rcl_nss_lock_timeout(guint timeout_ms)
         g_usleep(1000);
     } while (g_get_monotonic_time() < deadline);
 
-    return g_mutex_trylock(&nss_mutex);
+    if (!g_mutex_trylock(&nss_mutex))
+        return FALSE;
+    block_elogind_lookups();
+    return TRUE;
 }
 
 void
 rcl_nss_unlock(void)
 {
+    unblock_elogind_lookups();
     g_mutex_unlock(&nss_mutex);
 }
 
