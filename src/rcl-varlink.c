@@ -730,15 +730,41 @@ dispatch_request(GOutputStream *output, const gchar *data, GError **error)
             success = send_error(output, USER_DATABASE ".ServiceNotAvailable",
                                  error);
         } else {
+            /*
+             * Resolve and serialize NSS-backed records while holding the NSS
+             * mutex, but never write to a client socket under that mutex.
+             * A client that stops reading must not block other lookups.
+             */
+            GOutputStream *buffer = g_memory_output_stream_new_resizable();
+            GError *buffer_error = NULL;
+            gboolean prepared;
+
             if (user_record)
-                success = user_lookup(parameters, output, error);
+                prepared = user_lookup(parameters, buffer, &buffer_error);
             else if (group_record)
-                success = group_lookup(parameters, output, error);
+                prepared = group_lookup(parameters, buffer, &buffer_error);
             else
-                success = get_memberships(parameters, output, allow_multiple,
-                                          error);
+                prepared = get_memberships(parameters, buffer, allow_multiple,
+                                           &buffer_error);
 
             rcl_nss_unlock();
+
+            if (prepared) {
+                gsize length = g_memory_output_stream_get_data_size(
+                    G_MEMORY_OUTPUT_STREAM(buffer));
+                gpointer bytes = g_memory_output_stream_get_data(
+                    G_MEMORY_OUTPUT_STREAM(buffer));
+                success = g_output_stream_write_all(output, bytes, length,
+                                                    NULL, NULL, error);
+            } else {
+                success = FALSE;
+                if (buffer_error != NULL)
+                    g_propagate_error(error, buffer_error);
+                else
+                    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                                        "Failed to prepare Varlink response");
+            }
+            g_object_unref(buffer);
         }
     } else {
         success = send_named_error(output, SERVICE_INTERFACE ".MethodNotFound",
