@@ -48,6 +48,20 @@ check_socket_directory(const gchar *directory, gboolean final, GError **error)
     return TRUE;
 }
 
+/* Never remove an unrelated entry if the socket pathname was replaced. */
+static void
+unlink_matching_socket(const gchar *path, const struct stat *identity)
+{
+    struct stat current;
+    if (path != NULL && identity != NULL &&
+        lstat(path, &current) == 0 &&
+        S_ISSOCK(current.st_mode) &&
+        current.st_uid == identity->st_uid &&
+        current.st_dev == identity->st_dev &&
+        current.st_ino == identity->st_ino)
+        g_unlink(path);
+}
+
 static gboolean
 incoming_connection(GSocketService *service, GSocketConnection *connection,
                     GObject *source_object, gpointer user_data)
@@ -178,23 +192,37 @@ rcl_varlink_server_start_at(const gchar *directory, const gchar *socket_path,
     }
     g_object_unref(address);
     g_clear_object(&effective_address);
-    if (g_chmod(socket_path, 0666) < 0) {
-        g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
-                    "cannot set permissions on %s: %s", socket_path,
-                    g_strerror(errno));
-        g_socket_listener_close(G_SOCKET_LISTENER(service));
-        g_object_unref(service);
-        g_unlink(socket_path);
-        return NULL;
-    }
 
-    /* Remember the exact socket inode so shutdown never unlinks a path
-     * that was replaced after this listener started. */
+    /* Record the bound inode before changing pathname permissions. */
     struct stat bound_socket;
     if (lstat(socket_path, &bound_socket) != 0 ||
-        !S_ISSOCK(bound_socket.st_mode)) {
+        !S_ISSOCK(bound_socket.st_mode) ||
+        bound_socket.st_uid != geteuid()) {
         g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
                             "cannot verify bound Varlink socket");
+        g_socket_listener_close(G_SOCKET_LISTENER(service));
+        g_object_unref(service);
+        return NULL;
+    }
+    if (g_chmod(socket_path, 0666) < 0) {
+        int saved_errno = errno;
+        g_set_error(error, G_IO_ERROR, g_io_error_from_errno(saved_errno),
+                    "cannot set permissions on %s: %s", socket_path,
+                    g_strerror(saved_errno));
+        g_socket_listener_close(G_SOCKET_LISTENER(service));
+        unlink_matching_socket(socket_path, &bound_socket);
+        g_object_unref(service);
+        return NULL;
+    }
+    /* Refuse to serve if another inode replaced the path during setup. */
+    struct stat current_socket;
+    if (lstat(socket_path, &current_socket) != 0 ||
+        !S_ISSOCK(current_socket.st_mode) ||
+        current_socket.st_uid != bound_socket.st_uid ||
+        current_socket.st_dev != bound_socket.st_dev ||
+        current_socket.st_ino != bound_socket.st_ino) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Varlink socket changed during setup");
         g_socket_listener_close(G_SOCKET_LISTENER(service));
         g_object_unref(service);
         return NULL;
@@ -229,13 +257,7 @@ rcl_varlink_server_stop(GSocketService *service)
      * can bind the path while the old workers are draining. */
     const struct stat *identity =
         g_object_get_data(G_OBJECT(service), "homed-varlink-socket-identity");
-    struct stat current;
-    if (socket_path != NULL && identity != NULL &&
-        lstat(socket_path, &current) == 0 &&
-        S_ISSOCK(current.st_mode) &&
-        current.st_dev == identity->st_dev &&
-        current.st_ino == identity->st_ino)
-        g_unlink(socket_path);
+    unlink_matching_socket(socket_path, identity);
     g_socket_listener_close(G_SOCKET_LISTENER(service));
     rcl_varlink_workers_shutdown(workers);
     g_object_unref(service);
