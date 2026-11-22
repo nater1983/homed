@@ -1169,6 +1169,54 @@ test_shutdown_active_connection(Fixture *unused, gconstpointer data)
     g_object_unref(connection);
 }
 
+/* Repeatedly stop and restart the listener while workers are blocked
+ * reading incomplete frames. Shutdown must interrupt each read and
+ * release the socket path and worker resources for the next cycle. */
+static void
+test_repeated_shutdown_partial_requests(Fixture *unused, gconstpointer data)
+{
+    enum { CYCLES = 8, CLIENTS = 12 };
+    (void) unused; (void) data;
+
+    for (guint cycle = 0; cycle < CYCLES; cycle++) {
+        GSocketConnection *held[CLIENTS] = { NULL };
+        for (guint i = 0; i < CLIENTS; i++) {
+            GError *error = NULL;
+            held[i] = connect_socket();
+            /* A successful response proves the worker accepted this peer. */
+            g_autofree gchar *reply = exchange(held[i],
+                "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{}}");
+            assert_reply_contains(reply, "\"product\":\"homed\"");
+            g_assert_true(g_output_stream_write_all(
+                g_io_stream_get_output_stream(G_IO_STREAM(held[i])),
+                "{\"method\":", sizeof("{\"method\":") - 1,
+                NULL, NULL, &error));
+            g_assert_no_error(error);
+        }
+
+        rcl_varlink_stop(fixture.service);
+        fixture.service = NULL;
+        for (guint i = 0; i < CLIENTS; i++) {
+            GError *error = NULL;
+            guint8 byte;
+            g_socket_set_timeout(g_socket_connection_get_socket(held[i]), 5);
+            gssize count = g_input_stream_read(
+                g_io_stream_get_input_stream(G_IO_STREAM(held[i])),
+                &byte, 1, NULL, &error);
+            g_assert_no_error(error);
+            g_assert_cmpint(count, ==, 0);
+            g_io_stream_close(G_IO_STREAM(held[i]), NULL, NULL);
+            g_object_unref(held[i]);
+        }
+        /* A fresh listener must bind the same path after every shutdown. */
+        GError *error = NULL;
+        fixture.service = rcl_varlink_start_at(
+            fixture.directory, fixture.socket_path, &error);
+        g_assert_no_error(error);
+        g_assert_nonnull(fixture.service);
+    }
+}
+
 /* Keep all worker slots occupied by idle, accepted connections.  Each
  * GetInfo reply confirms that the listener dispatched that connection. */
 static void
@@ -1294,6 +1342,8 @@ int
 main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
+    g_test_add("/varlink/repeated-shutdown-partial-requests", Fixture, NULL, setup,
+               test_repeated_shutdown_partial_requests, teardown);
     g_test_add("/varlink/shutdown-active-connection", Fixture, NULL, setup,
                test_shutdown_active_connection, teardown);
     g_test_add("/varlink/disconnect-recovery", Fixture, NULL, setup,
