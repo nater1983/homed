@@ -1076,6 +1076,35 @@ test_incomplete_frame_disconnect(Fixture *unused, gconstpointer data)
 }
 
 
+/* A peer that never completes its frame must eventually be retired,
+ * without requiring server shutdown or blocking other lookups. */
+static void
+test_incomplete_frame_timeout(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    g_autoptr(GSocketConnection) stalled = connect_socket();
+    GOutputStream *output = g_io_stream_get_output_stream(G_IO_STREAM(stalled));
+    const gchar partial[] = "{\"method\":";
+    GError *error = NULL;
+    g_assert_true(g_output_stream_write_all(output, partial,
+                                            sizeof(partial) - 1,
+                                            NULL, NULL, &error));
+    g_assert_no_error(error);
+
+    g_socket_set_timeout(g_socket_connection_get_socket(stalled), 5);
+    guint8 byte = 0;
+    gssize count = g_input_stream_read(
+        g_io_stream_get_input_stream(G_IO_STREAM(stalled)),
+        &byte, 1, NULL, &error);
+    g_assert_no_error(error);
+    g_assert_cmpint(count, ==, 0);
+
+    g_autoptr(GSocketConnection) independent = connect_socket();
+    g_autofree gchar *reply = exchange(independent,
+        "{\"method\":\"org.varlink.service.GetInfo\",\"parameters\":{}}");
+    assert_reply_contains(reply, "\"product\":\"homed\"");
+}
+
 static void
 test_disconnect_recovery(Fixture *unused, gconstpointer data)
 {
@@ -1271,6 +1300,8 @@ main(int argc, char **argv)
                test_disconnect_recovery, teardown);
     g_test_add("/varlink/oversized-frame", Fixture, NULL, setup,
                test_oversized_frame, teardown);
+    g_test_add("/varlink/incomplete-frame-timeout", Fixture, NULL, setup,
+               test_incomplete_frame_timeout, teardown);
     g_test_add("/varlink/incomplete-frame-disconnect", Fixture, NULL, setup,
                test_incomplete_frame_disconnect, teardown);
     g_test_add("/varlink/empty-frame", Fixture, NULL, setup,
