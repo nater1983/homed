@@ -161,21 +161,21 @@ static struct passwd *passwd_for_pid(guint32 pid) {
     close(status_fd);
     if (n <= 0)
         return NULL;
-    buffer[n] = '\\0';
+    buffer[n] = '\0';
     const gchar *line = buffer;
     while (*line) {
         if (g_str_has_prefix(line, "Uid:")) {
             const gchar *value = line + 4;
-            while (*value == ' ' || *value == '\\t') value++;
+            while (*value == ' ' || *value == '\t') value++;
             errno = 0;
             gchar *end = NULL;
             guint64 parsed = g_ascii_strtoull(value, &end, 10);
             if (errno != 0 || end == value || parsed > G_MAXUINT32 ||
-                (*end != ' ' && *end != '\\t' && *end != '\\n'))
+                (*end != ' ' && *end != '\t' && *end != '\n'))
                 return NULL;
             return getpwuid((uid_t) parsed);
         }
-        const gchar *next = strchr(line, '\\n');
+        const gchar *next = strchr(line, '\n');
         if (next == NULL) break;
         line = next + 1;
     }
