@@ -827,7 +827,12 @@ rcl_varlink_serve_connection(GSocketConnection *connection)
         g_byte_array_append(request, &byte, 1);
     }
     if (error != NULL) {
-        g_warning("Varlink request failed: %s", error->message);
+        /* Peer disconnects and shutdown-induced socket errors are expected
+         * while handling slow or abandoned clients. */
+        if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_BROKEN_PIPE) &&
+            !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED) &&
+            !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+            g_warning("Varlink request failed: %s", error->message);
         g_error_free(error);
     }
     g_byte_array_unref(request);
