@@ -176,6 +176,18 @@ rcl_varlink_server_start_at(const gchar *directory, const gchar *socket_path,
         return NULL;
     }
 
+    /* Remember the exact socket inode so shutdown never unlinks a path
+     * that was replaced after this listener started. */
+    struct stat bound_socket;
+    if (lstat(socket_path, &bound_socket) != 0 ||
+        !S_ISSOCK(bound_socket.st_mode)) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "cannot verify bound Varlink socket");
+        g_socket_listener_close(G_SOCKET_LISTENER(service));
+        g_object_unref(service);
+        return NULL;
+    }
+
     workers = rcl_varlink_workers_new();
     g_object_set_data_full(G_OBJECT(service), "homed-varlink-workers",
                            workers, rcl_varlink_workers_free);
@@ -183,6 +195,10 @@ rcl_varlink_server_start_at(const gchar *directory, const gchar *socket_path,
                      workers);
     g_object_set_data_full(G_OBJECT(service), "homed-varlink-socket-path",
                            g_strdup(socket_path), g_free);
+    struct stat *socket_identity = g_new(struct stat, 1);
+    *socket_identity = bound_socket;
+    g_object_set_data_full(G_OBJECT(service), "homed-varlink-socket-identity",
+                           socket_identity, g_free);
     g_socket_service_start(service);
     return service;
 }
@@ -199,7 +215,14 @@ rcl_varlink_server_stop(GSocketService *service)
     g_socket_service_stop(service);
     /* Remove the path while the listener still owns it. A new listener
      * can bind the path while the old workers are draining. */
-    if (socket_path != NULL)
+    const struct stat *identity =
+        g_object_get_data(G_OBJECT(service), "homed-varlink-socket-identity");
+    struct stat current;
+    if (socket_path != NULL && identity != NULL &&
+        lstat(socket_path, &current) == 0 &&
+        S_ISSOCK(current.st_mode) &&
+        current.st_dev == identity->st_dev &&
+        current.st_ino == identity->st_ino)
         g_unlink(socket_path);
     g_socket_listener_close(G_SOCKET_LISTENER(service));
     rcl_varlink_workers_shutdown(workers);
