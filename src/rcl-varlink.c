@@ -831,7 +831,8 @@ rcl_varlink_serve_connection(GSocketConnection *connection)
          * while handling slow or abandoned clients. */
         if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_BROKEN_PIPE) &&
             !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED) &&
-            !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+            !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED) &&
+            !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT))
             g_warning("Varlink request failed: %s", error->message);
         g_error_free(error);
     }
