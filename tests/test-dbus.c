@@ -377,6 +377,25 @@ test_record_by_pid(Fixture *fixture, gconstpointer data)
     g_variant_unref(reply);
 }
 
+/* Reject invalid unsigned PIDs without resolving them to NSS records. */
+static void
+test_invalid_pids(Fixture *fixture, gconstpointer data)
+{
+    const guint32 invalid[] = { 0u, G_MAXINT32 + 1u, G_MAXUINT32 };
+    (void) data;
+    for (guint i = 0; i < G_N_ELEMENTS(invalid); i++) {
+        g_autoptr(GError) error = NULL;
+        g_autoptr(GVariant) reply = call_manager(fixture, "GetUserRecordByPID",
+            g_variant_new("(u)", invalid[i]), G_VARIANT_TYPE("(a{sv}b)"),
+            &error);
+        g_assert_null(reply);
+        g_assert_nonnull(error);
+        g_assert_true(g_dbus_error_is_remote_error(error));
+        g_autofree gchar *name = g_dbus_error_get_remote_error(error);
+        g_assert_cmpstr(name, ==, "org.freedesktop.home1.NoSuchHome");
+    }
+}
+
 static void
 test_missing_user(Fixture *fixture, gconstpointer data)
 {
@@ -744,6 +763,8 @@ main(int argc, char **argv)
                test_record_by_caller, teardown);
     g_test_add("/dbus/record-by-pid", Fixture, NULL, setup,
                test_record_by_pid, teardown);
+    g_test_add("/dbus/invalid-pids", Fixture, NULL, setup,
+               test_invalid_pids, teardown);
     g_test_add("/dbus/missing-user", Fixture, NULL, setup,
                test_missing_user, teardown);
     g_test_add("/dbus/list-homes", Fixture, NULL, setup,
