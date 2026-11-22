@@ -505,6 +505,84 @@ test_membership_nss_failures(Fixture *unused, gconstpointer data)
     g_object_unref(connection);
 }
 
+/* The first response is held after NSS unlock but before socket I/O.
+ * A second request must complete while that response remains paused. */
+extern void rcl_varlink_test_set_before_nss_reply_write(void (*callback)(void));
+
+static GMutex slow_reply_mutex;
+static GCond slow_reply_cond;
+static gboolean slow_reply_paused;
+static gboolean slow_reply_release;
+static gint slow_reply_callbacks;
+
+static void
+pause_first_nss_reply(void)
+{
+    if (!g_atomic_int_compare_and_exchange(&slow_reply_callbacks, 0, 1))
+        return;
+
+    g_mutex_lock(&slow_reply_mutex);
+    slow_reply_paused = TRUE;
+    g_cond_broadcast(&slow_reply_cond);
+    while (!slow_reply_release)
+        g_cond_wait(&slow_reply_cond, &slow_reply_mutex);
+    g_mutex_unlock(&slow_reply_mutex);
+}
+
+static gpointer
+slow_reply_worker(gpointer unused)
+{
+    (void) unused;
+    g_autoptr(GSocketConnection) connection = connect_socket();
+    g_autofree gchar *reply = exchange(connection,
+        "{\\"method\\":\\"io.systemd.UserDatabase.GetUserRecord\\","
+        "\\"parameters\\":{\\"service\\":\\"io.systemd.Home\\","
+        "\\"userName\\":\\"root\\"}}");
+    assert_reply_contains(reply, "\\"userName\\":\\"root\\"");
+    return NULL;
+}
+
+static void
+test_slow_reply_does_not_hold_nss_lock(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    g_mutex_init(&slow_reply_mutex);
+    g_cond_init(&slow_reply_cond);
+    slow_reply_paused = FALSE;
+    slow_reply_release = FALSE;
+    g_atomic_int_set(&slow_reply_callbacks, 0);
+    rcl_varlink_test_set_before_nss_reply_write(pause_first_nss_reply);
+
+    GThread *first = g_thread_new("paused-varlink-reply",
+                                  slow_reply_worker, NULL);
+
+    g_mutex_lock(&slow_reply_mutex);
+    gint64 deadline = g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND;
+    while (!slow_reply_paused && g_get_monotonic_time() < deadline)
+        g_cond_wait_until(&slow_reply_cond, &slow_reply_mutex, deadline);
+    gboolean paused = slow_reply_paused;
+    g_mutex_unlock(&slow_reply_mutex);
+
+    if (paused) {
+        g_autoptr(GSocketConnection) second = connect_socket();
+        g_autofree gchar *reply = exchange(second,
+            "{\\"method\\":\\"io.systemd.UserDatabase.GetUserRecord\\","
+            "\\"parameters\\":{\\"service\\":\\"io.systemd.Home\\","
+            "\\"userName\\":\\"root\\"}}");
+        assert_reply_contains(reply, "\\"userName\\":\\"root\\"");
+    }
+
+    g_mutex_lock(&slow_reply_mutex);
+    slow_reply_release = TRUE;
+    g_cond_broadcast(&slow_reply_cond);
+    g_mutex_unlock(&slow_reply_mutex);
+    g_thread_join(first);
+    rcl_varlink_test_set_before_nss_reply_write(NULL);
+    g_cond_clear(&slow_reply_cond);
+    g_mutex_clear(&slow_reply_mutex);
+    g_assert_true(paused);
+}
+
 static void
 test_nss_lock_contention(Fixture *unused, gconstpointer data)
 {
@@ -1179,6 +1257,8 @@ main(int argc, char **argv)
                test_listener_stale_socket, teardown);
     g_test_add("/varlink/membership-nss-failures", Fixture, NULL, setup,
                test_membership_nss_failures, teardown);
+    g_test_add("/varlink/slow-reply-nss-unlocked", Fixture, NULL, setup,
+               test_slow_reply_does_not_hold_nss_lock, teardown);
     g_test_add("/varlink/nss-lock-contention", Fixture, NULL, setup,
                test_nss_lock_contention, teardown);
     g_test_add("/varlink/nss-provider-recursion", Fixture, NULL, setup,
