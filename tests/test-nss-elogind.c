@@ -100,9 +100,14 @@ test_elogind_provider_blocked(void)
                    (unsigned long) pw.pw_uid);
     g_test_message("Guard still active: %d", is_blocked());
 
-    /* Diagnostic run: record the provider response before defining
-     * the expected status for a blocked lookup. */
-    /* g_assert_cmpint(status, ==, -1); */
+    /* A blocked provider can still resolve a local root record.
+     * Verify that it does so without clearing the recursion guard.
+     * This is not a substitute for testing recursive userdb suppression. */
+    g_assert_cmpint(status, ==, 1); /* NSS_STATUS_SUCCESS */
+    g_assert_cmpint(error_number, ==, 0);
+    g_assert_nonnull(pw.pw_name);
+    g_assert_cmpstr(pw.pw_name, ==, "root");
+    g_assert_cmpuint(pw.pw_uid, ==, 0);
     g_assert_true(is_blocked());
     rcl_nss_unlock();
     g_assert_false(is_blocked());
