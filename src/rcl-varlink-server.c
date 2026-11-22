@@ -143,6 +143,18 @@ rcl_varlink_server_start_at(const gchar *directory, const gchar *socket_path,
                                        "cannot probe %s: ", socket_path);
             return NULL;
         }
+        /* A stale socket may have been replaced while the connection
+         * probe ran. Refuse cleanup unless it is still the same inode. */
+        struct stat current;
+        if (lstat(socket_path, &current) != 0 ||
+            !S_ISSOCK(current.st_mode) ||
+            current.st_uid != status.st_uid ||
+            current.st_dev != status.st_dev ||
+            current.st_ino != status.st_ino) {
+            g_set_error(error, G_IO_ERROR, G_IO_ERROR_EXISTS,
+                        "stale Varlink socket changed during probe: %s", socket_path);
+            return NULL;
+        }
         if (g_unlink(socket_path) < 0) {
             g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
                         "cannot remove stale socket %s: %s", socket_path,
