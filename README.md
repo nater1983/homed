@@ -133,7 +133,7 @@ Tests are enabled by default. To configure without building the test suite, pass
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `tests` | `true` | Build and register the test suite. |
-| `homectl` | `false` | Build and install the read-only client and its manual page. |
+| `homectl` | `true` | Build and install the read-only client and its manual page. |
 | `privileged-group` | `wheel` | Group used by the installed Polkit rules. |
 | `varlink-vendor` | `N4t3R` | Vendor name reported by `org.varlink.service.GetInfo`. |
 | `dbus_system_service_dir` | empty | Override the D-Bus system service directory. |
@@ -146,8 +146,8 @@ When an override directory is empty, Meson uses the corresponding directory repo
 
 Enable the client with `-Dhomectl=true` in Meson or run the SlackBuild with
 `HOMECTL=true`. It installs `homectl` in the configured `bindir` and
-includes `homectl(1)`. The default build leaves the command name available
-for an existing upstream client.
+includes `homectl(1)`. Set `-Dhomectl=false` (or `HOMECTL=false` in the SlackBuild) to avoid
+installing this client when another `homectl` implementation is preferred.
 
 ```sh
 homectl list
@@ -205,6 +205,24 @@ varlinkctl --more call unix:/run/systemd/userdb/io.systemd.Home \
   io.systemd.UserDatabase.GetMemberships \
   '{"userName":"root","service":"io.systemd.Home"}'
 ```
+
+### Slackware runtime validation
+
+On Slackware Current with SysVinit/OpenRC and elogind, the 0.4.0 development
+branch was checked for D-Bus activation after `SIGTERM`, Varlink socket
+recreation (`0666`, root-owned), `userdbctl` user lookups, `homectl inspect`,
+and streamed `GetMemberships` responses. The daemon was activated with a new
+PID after the previous instance exited; both user and group records were
+readable after activation. These are runtime observations, not a substitute
+for final regression and sanitizer testing.
+
+`userdbctl --service=io.systemd.Home user nathan` displayed supplementary
+groups twice in the tested environment. Debug logging showed an initial
+membership list before the Varlink `GetMemberships` responses, followed by
+unique membership pairs from homed. Direct `GetUserRecord`, `GetGroupRecord`,
+and `GetMemberships` responses contained no duplicate entries. The source of
+the initial list and the client-side aggregation behavior have not been fully
+verified; do not remove either membership API to hide the display issue.
 
 ## Installed components
 
