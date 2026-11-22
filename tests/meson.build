@@ -48,3 +48,13 @@ if get_option('homectl')
 endif
 test('dbus-integration', test_dbus, timeout: 60,
   env: dbus_test_env, depends: dbus_test_dependencies)
+
+# Phase 6: exercise the production NSS guard against the real elogind module.
+# The test skips elogind-specific assertions if the optional NSS module is absent.
+test_nss_elogind = executable('test-nss-elogind',
+  'test-nss-elogind.c',
+  '../src/rcl-nss.c',
+  dependencies: [glib_dep, json_glib],
+  include_directories: include_directories('../src'))
+
+test('nss-elogind-integration', test_nss_elogind, timeout: 30)
