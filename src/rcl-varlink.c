@@ -648,6 +648,18 @@ invalid_lookup_parameter(JsonObject *parameters, const gchar *id_key,
     return NULL;
 }
 
+#ifdef HOMED_TESTING
+/* Test-only pause point: NSS has been unlocked, but the client reply
+ * has not yet been written. */
+static void (*before_nss_reply_write)(void);
+
+void
+rcl_varlink_test_set_before_nss_reply_write(void (*callback)(void))
+{
+    before_nss_reply_write = callback;
+}
+#endif
+
 static gboolean
 dispatch_request(GOutputStream *output, const gchar *data, GError **error)
 {
@@ -750,6 +762,10 @@ dispatch_request(GOutputStream *output, const gchar *data, GError **error)
             rcl_nss_unlock();
 
             if (prepared) {
+#ifdef HOMED_TESTING
+                if (before_nss_reply_write != NULL)
+                    before_nss_reply_write();
+#endif
                 gsize length = g_memory_output_stream_get_data_size(
                     G_MEMORY_OUTPUT_STREAM(buffer));
                 gpointer bytes = g_memory_output_stream_get_data(
