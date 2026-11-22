@@ -1,6 +1,9 @@
 #include "rcl-home.h"
 #include "rcl-nss.h"
-#include <pwd.h>\n#include <fcntl.h>\n#include <errno.h>\n#include <string.h>
+#include <pwd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <string.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <unistd.h>
