@@ -1365,6 +1365,38 @@ test_listener_replaced_socket_path(Fixture *unused, gconstpointer data)
     g_assert_cmpint(g_unlink(old_path), ==, 0);
 }
 
+/* A replacement socket is just as important to preserve as a file. */
+static void
+test_listener_replaced_by_socket(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *old_path =
+        g_strconcat(fixture.socket_path, ".original", NULL);
+    g_assert_cmpint(g_rename(fixture.socket_path, old_path), ==, 0);
+
+    g_autoptr(GSocket) replacement = g_socket_new(
+        G_SOCKET_FAMILY_UNIX, G_SOCKET_TYPE_STREAM,
+        G_SOCKET_PROTOCOL_DEFAULT, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(replacement);
+    g_autoptr(GSocketAddress) address =
+        g_unix_socket_address_new(fixture.socket_path);
+    g_assert_true(g_socket_bind(replacement, address, FALSE, &error));
+    g_assert_no_error(error);
+    g_assert_true(g_socket_listen(replacement, &error));
+    g_assert_no_error(error);
+
+    rcl_varlink_stop(fixture.service);
+    fixture.service = NULL;
+
+    struct stat status;
+    g_assert_cmpint(lstat(fixture.socket_path, &status), ==, 0);
+    g_assert_true(S_ISSOCK(status.st_mode));
+    g_assert_cmpint(g_unlink(fixture.socket_path), ==, 0);
+    g_assert_cmpint(g_unlink(old_path), ==, 0);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1414,6 +1446,8 @@ main(int argc, char **argv)
     g_test_add_func("/varlink/listener-path-safety", test_listener_path_safety);
     g_test_add("/varlink/listener-replaced-socket-path", Fixture, NULL, setup,
                test_listener_replaced_socket_path, teardown);
+    g_test_add("/varlink/listener-replaced-by-socket", Fixture, NULL, setup,
+               test_listener_replaced_by_socket, teardown);
     g_test_add_func("/varlink/listener-elogind-alias", test_listener_elogind_alias);
     g_test_add("/varlink/listener-active-socket", Fixture, NULL, setup,
                test_listener_active_socket, teardown);
