@@ -1,6 +1,6 @@
 #include "rcl-home.h"
 #include "rcl-nss.h"
-#include <pwd.h>
+#include <pwd.h>\n#include <fcntl.h>\n#include <errno.h>\n#include <string.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -137,20 +137,46 @@ static void return_user_record_by_pid(GDBusMethodInvocation *inv, const struct p
     g_dbus_method_invocation_return_value(inv, g_variant_new("(a{sv}b)", &b, TRUE));
 }
 
-static struct passwd *passwd_for_pid(pid_t pid) {
-    gchar *file, *contents = NULL; gchar **lines; uid_t uid = (uid_t)-1;
-    gboolean found = FALSE; struct passwd *pw = NULL;
-    if (pid <= 0) return NULL;
-    file = g_strdup_printf("/proc/%ld/status", (long)pid);
-    if (!g_file_get_contents(file, &contents, NULL, NULL)) { g_free(file); return NULL; }
-    g_free(file); lines = g_strsplit(contents, "\n", -1);
-    for (guint i=0; lines[i]; i++) {
-        unsigned long real_uid;
-        if (sscanf(lines[i], "Uid:%lu", &real_uid) == 1) { uid=(uid_t)real_uid; found=TRUE; break; }
+/* Reject invalid or out-of-range PIDs before constructing procfs paths.
+ * Read the process directory through a pinned descriptor to avoid resolving
+ * the numeric PID a second time after opening it. */
+static struct passwd *passwd_for_pid(guint32 pid) {
+    if (pid == 0 || (guint64) pid > G_MAXINT)
+        return NULL;
+
+    g_autofree gchar *directory = g_strdup_printf("/proc/%u", pid);
+    int proc_fd = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (proc_fd < 0)
+        return NULL;
+    int status_fd = openat(proc_fd, "status", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    close(proc_fd);
+    if (status_fd < 0)
+        return NULL;
+
+    gchar buffer[8192];
+    ssize_t n = read(status_fd, buffer, sizeof(buffer) - 1);
+    close(status_fd);
+    if (n <= 0)
+        return NULL;
+    buffer[n] = '\\0';
+    const gchar *line = buffer;
+    while (*line) {
+        if (g_str_has_prefix(line, "Uid:")) {
+            const gchar *value = line + 4;
+            while (*value == ' ' || *value == '\\t') value++;
+            errno = 0;
+            gchar *end = NULL;
+            guint64 parsed = g_ascii_strtoull(value, &end, 10);
+            if (errno != 0 || end == value || parsed > G_MAXUINT32 ||
+                (*end != ' ' && *end != '\\t' && *end != '\\n'))
+                return NULL;
+            return getpwuid((uid_t) parsed);
+        }
+        const gchar *next = strchr(line, '\\n');
+        if (next == NULL) break;
+        line = next + 1;
     }
-    g_strfreev(lines); g_free(contents);
-    if (found) pw = getpwuid(uid);
-    return pw;
+    return NULL;
 }
 
 static void method_call_unlocked(const gchar *method, GVariant *params, const guint32 *caller_uid,
@@ -166,7 +192,7 @@ static void method_call_unlocked(const gchar *method, GVariant *params, const gu
         if (pw) { return_user_record(self,inv,pw); return; } goto no_home;
     }
     if (g_str_equal(method, "GetUserRecordByPID")) {
-        guint pid; g_variant_get(params,"(u)",&pid); pw=passwd_for_pid((pid_t)pid);
+        guint pid; g_variant_get(params,"(u)",&pid); pw=passwd_for_pid(pid);
         if (pw) { return_user_record_by_pid(inv,pw); return; } goto no_user;
     }
     if (g_str_equal(method, "GetHomeByName")) {
