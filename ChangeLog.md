@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-- Add an optional read-only `homectl` client for listing and inspecting NSS accounts, with JSON output for both commands.
+- Add a read-only `homectl` client for listing and inspecting NSS accounts, with JSON output for both commands; it can be disabled at build time.
+- Document Slackware runtime checks of D-Bus activation, Varlink socket recreation, user/group lookups, and membership streaming after daemon restart.
+- Record the observed duplicate supplementary-group display in `userdbctl`: raw Varlink membership responses are unique, while debug output shows a separate initial group list before streamed responses. The aggregation cause remains unconfirmed.
+- Align the README's `homectl` default with the Meson option and refresh the daemon manual page for the current release candidate.
 
 ## 0.4.rc — 2026-11-15
 
