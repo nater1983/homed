@@ -45,6 +45,13 @@ worker_main(gpointer data)
     VarlinkWorker *worker = data;
     RclVarlinkWorkers *workers = worker->workers;
 
+    /* Bound time spent waiting for a request byte or writing to a peer.
+     * A stalled client must not occupy a worker indefinitely. */
+#ifdef HOMED_TESTING
+    g_socket_set_timeout(g_socket_connection_get_socket(worker->connection), 2);
+#else
+    g_socket_set_timeout(g_socket_connection_get_socket(worker->connection), 30);
+#endif
     rcl_varlink_serve_connection(worker->connection);
     g_io_stream_close(G_IO_STREAM(worker->connection), NULL, NULL);
 
