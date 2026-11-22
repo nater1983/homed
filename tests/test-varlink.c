@@ -8,6 +8,7 @@
 #include <glib/gstdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 typedef struct {
@@ -581,6 +582,59 @@ test_slow_reply_does_not_hold_nss_lock(Fixture *unused, gconstpointer data)
     g_cond_clear(&slow_reply_cond);
     g_mutex_clear(&slow_reply_mutex);
     g_assert_true(paused);
+}
+
+/* Flood a non-reading client with pipelined NSS requests until the
+ * server's socket send buffer is pressured. Other clients must still
+ * resolve NSS records, and shutdown must retire the stalled worker. */
+static void
+test_nonreading_client_backpressure(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    g_autoptr(GSocketConnection) stalled = connect_socket();
+    GSocket *socket = g_socket_connection_get_socket(stalled);
+    const gchar request[] =
+        "{\"method\":\"io.systemd.UserDatabase.GetUserRecord\","
+        "\"parameters\":{\"service\":\"io.systemd.Home\","
+        "\"userName\":\"root\"}}\0";
+    guint sent = 0;
+    GError *error = NULL;
+
+    /* Do not block the test while feeding a client that never reads. */
+    g_socket_set_blocking(socket, FALSE);
+    g_socket_set_option(socket, SOL_SOCKET, SO_RCVBUF, 4096, &error);
+    g_assert_no_error(error);
+    for (guint i = 0; i < 20000; i++) {
+        gssize n = g_socket_send(socket, request, sizeof(request) - 1,
+                                 NULL, &error);
+        if (n < 0) {
+            if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_WOULD_BLOCK)) {
+                g_clear_error(&error);
+                break;
+            }
+            g_assert_no_error(error);
+        }
+        if (n != sizeof(request) - 1)
+            break; /* Avoid sending a partial JSON frame. */
+        sent++;
+    }
+    g_assert_cmpuint(sent, >, 0);
+    /* Give the worker time to exhaust the peer's unread receive buffer. */
+    g_usleep(300000);
+
+    g_autoptr(GSocketConnection) independent = connect_socket();
+    g_socket_set_timeout(g_socket_connection_get_socket(independent), 3);
+    g_autofree gchar *reply = exchange(independent,
+        "{\"method\":\"io.systemd.UserDatabase.GetUserRecord\","
+        "\"parameters\":{\"service\":\"io.systemd.Home\","
+        "\"userName\":\"root\"}}");
+    assert_reply_contains(reply, "\"userName\":\"root\"");
+
+    /* The shutdown path must interrupt a blocked socket writer. */
+    rcl_varlink_stop(fixture.service);
+    fixture.service = NULL;
+    g_assert_true(g_io_stream_close(G_IO_STREAM(stalled), NULL, &error));
+    g_assert_no_error(error);
 }
 
 static void
@@ -1257,6 +1311,8 @@ main(int argc, char **argv)
                test_listener_stale_socket, teardown);
     g_test_add("/varlink/membership-nss-failures", Fixture, NULL, setup,
                test_membership_nss_failures, teardown);
+    g_test_add("/varlink/nonreading-client-backpressure", Fixture, NULL, setup,
+               test_nonreading_client_backpressure, teardown);
     g_test_add("/varlink/slow-reply-nss-unlocked", Fixture, NULL, setup,
                test_slow_reply_does_not_hold_nss_lock, teardown);
     g_test_add("/varlink/nss-lock-contention", Fixture, NULL, setup,
