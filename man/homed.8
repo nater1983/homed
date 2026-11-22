@@ -1,4 +1,4 @@
-.TH HOMED 8 "October 2026" "homed 0.3.1" "System Administration"
+.TH HOMED 8 "November 2026" "homed 0.4.rc" "System Administration"
 .SH NAME
 homed \- NSS-backed org.freedesktop.home1 D-Bus and Varlink compatibility service
 .SH SYNOPSIS
@@ -29,6 +29,8 @@ The Varlink interface implements
 .BR GetGroupRecord ,
 and
 .BR GetMemberships .
+All three methods require the request parameter
+.BR service=io.systemd.Home .
 The first two return NSS-derived user or group records and set
 .B incomplete
 to false because no privileged fields are redacted. Membership queries
@@ -128,8 +130,13 @@ busctl --system introspect org.freedesktop.home1 /org/freedesktop/home1
 Look up an account through Varlink:
 .PP
 .nf
-varlink call unix:/run/systemd/userdb/io.systemd.Home io.systemd.UserDatabase.GetUserRecord '{"userName":"root","service":"io.systemd.Home"}'
+varlinkctl call /run/systemd/userdb/io.systemd.Home io.systemd.UserDatabase.GetUserRecord '{"userName":"root","service":"io.systemd.Home"}'
 .fi
+.PP
+For streamed memberships, use
+.B varlinkctl call --more
+with a request containing
+.BR service=io.systemd.Home .
 .SH LIMITATIONS
 .B homed
 does not implement home creation or registration, storage backends, encrypted
