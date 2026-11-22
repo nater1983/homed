@@ -1338,6 +1338,33 @@ test_repeated_saturation(Fixture *unused, gconstpointer data)
     }
 }
 
+/* Shutdown must not remove an unrelated filesystem entry placed at the
+ * socket pathname after the listener was bound. */
+static void
+test_listener_replaced_socket_path(Fixture *unused, gconstpointer data)
+{
+    (void) unused; (void) data;
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *old_path =
+        g_strconcat(fixture.socket_path, ".original", NULL);
+
+    g_assert_cmpint(g_rename(fixture.socket_path, old_path), ==, 0);
+    g_assert_true(g_file_set_contents(fixture.socket_path,
+                                      "replacement", -1, &error));
+    g_assert_no_error(error);
+
+    rcl_varlink_stop(fixture.service);
+    fixture.service = NULL;
+
+    g_autofree gchar *contents = NULL;
+    g_assert_true(g_file_get_contents(fixture.socket_path,
+                                      &contents, NULL, &error));
+    g_assert_no_error(error);
+    g_assert_cmpstr(contents, ==, "replacement");
+    g_assert_cmpint(g_unlink(fixture.socket_path), ==, 0);
+    g_assert_cmpint(g_unlink(old_path), ==, 0);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1385,6 +1412,8 @@ main(int argc, char **argv)
     g_test_add("/varlink/listener-restart", Fixture, NULL, setup,
                test_listener_restart, teardown);
     g_test_add_func("/varlink/listener-path-safety", test_listener_path_safety);
+    g_test_add("/varlink/listener-replaced-socket-path", Fixture, NULL, setup,
+               test_listener_replaced_socket_path, teardown);
     g_test_add_func("/varlink/listener-elogind-alias", test_listener_elogind_alias);
     g_test_add("/varlink/listener-active-socket", Fixture, NULL, setup,
                test_listener_active_socket, teardown);
