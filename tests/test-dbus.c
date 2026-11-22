@@ -392,7 +392,7 @@ test_invalid_pids(Fixture *fixture, gconstpointer data)
         g_assert_nonnull(error);
         g_assert_true(g_dbus_error_is_remote_error(error));
         g_autofree gchar *name = g_dbus_error_get_remote_error(error);
-        g_assert_cmpstr(name, ==, "org.freedesktop.home1.NoSuchHome");
+        g_assert_cmpstr(name, ==, "org.freedesktop.home1.NoSuchUser");
     }
 }
 
