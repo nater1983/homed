@@ -535,10 +535,10 @@ slow_reply_worker(gpointer unused)
     (void) unused;
     g_autoptr(GSocketConnection) connection = connect_socket();
     g_autofree gchar *reply = exchange(connection,
-        "{\\"method\\":\\"io.systemd.UserDatabase.GetUserRecord\\","
-        "\\"parameters\\":{\\"service\\":\\"io.systemd.Home\\","
-        "\\"userName\\":\\"root\\"}}");
-    assert_reply_contains(reply, "\\"userName\\":\\"root\\"");
+        "{\"method\":\"io.systemd.UserDatabase.GetUserRecord\","
+        "\"parameters\":{\"service\":\"io.systemd.Home\","
+        "\"userName\":\"root\"}}");
+    assert_reply_contains(reply, "\"userName\":\"root\"");
     return NULL;
 }
 
@@ -566,10 +566,10 @@ test_slow_reply_does_not_hold_nss_lock(Fixture *unused, gconstpointer data)
     if (paused) {
         g_autoptr(GSocketConnection) second = connect_socket();
         g_autofree gchar *reply = exchange(second,
-            "{\\"method\\":\\"io.systemd.UserDatabase.GetUserRecord\\","
-            "\\"parameters\\":{\\"service\\":\\"io.systemd.Home\\","
-            "\\"userName\\":\\"root\\"}}");
-        assert_reply_contains(reply, "\\"userName\\":\\"root\\"");
+            "{\"method\":\"io.systemd.UserDatabase.GetUserRecord\","
+            "\"parameters\":{\"service\":\"io.systemd.Home\","
+            "\"userName\":\"root\"}}");
+        assert_reply_contains(reply, "\"userName\":\"root\"");
     }
 
     g_mutex_lock(&slow_reply_mutex);
