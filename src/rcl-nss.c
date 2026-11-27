@@ -120,7 +120,14 @@ rcl_nss_user_record(const struct passwd *user, const gchar *service)
     json_object_set_string_member(record, "homeDirectory", user->pw_dir ? user->pw_dir : "");
     json_object_set_string_member(record, "shell", rcl_nss_user_shell(user));
     json_object_set_string_member(record, "service", service);
-    json_object_set_string_member(record, "disposition", "regular");
+    /* Preserve the account class used by userdb consumers such as GDM.
+     * Slackware reserves UIDs below 1000 for system users; root and nobody
+     * have intrinsic dispositions in the user record specification. */
+    const gchar *disposition =
+        (user->pw_uid == 0 || user->pw_uid == 65534) ? "intrinsic" :
+        user->pw_uid < 1000 ? "system" : "regular";
+
+    json_object_set_string_member(record, "disposition", disposition);
 
     return record;
 }
