@@ -2,10 +2,12 @@
 
 ## Unreleased
 
+## 0.4.rc1 — 2026-11-26
+
 - Classify NSS-backed user records by UID instead of marking every account regular: root/nobody are intrinsic, low-UID service accounts are system, and login accounts are regular; add regression tests.
 - Add a read-only `homectl` client for listing and inspecting NSS accounts, with JSON output for both commands; it can be disabled at build time.
 - Document Slackware runtime checks of D-Bus activation, Varlink socket recreation, user/group lookups, and membership streaming after daemon restart.
-- Record the observed duplicate supplementary-group display in `userdbctl`: raw Varlink membership responses are unique, while debug output shows a separate initial group list before streamed responses. The aggregation cause remains unconfirmed.
+- Document the duplicate supplementary-group display seen in elogind 257.16 `userdbctl`: NSS and Varlink enumeration can both return the same memberships. Raw homed Varlink replies remain unique; no deduplication or elogind workaround is included.
 - Align the README's `homectl` default with the Meson option and refresh the daemon manual page for the current release candidate.
 
 ## 0.4.rc — 2026-11-15
