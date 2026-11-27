@@ -40,7 +40,7 @@ The system-bus policy reserves ownership of `org.freedesktop.home1` for root and
 
 User records contain the NSS-derived fields `userName`, `uid`, `gid`, `realName`, `homeDirectory`, `shell`, `service`, and `disposition`. D-Bus records identify their source as `nss`.
 
-In 0.4.0, `GetUserRecordByName` and `GetUserRecordByUID` return the upstream `sbo` signature: a JSON user record, the `incomplete` flag, and a Home object path. Clients using the previous `a{sv}b` reply must decode the JSON string. The homed-specific `GetUserRecordByPID` still returns `a{sv}b`. Home objects also provide the read-only `UnixRecord` and `UserRecord` properties.
+In the 0.4 release series, `GetUserRecordByName` and `GetUserRecordByUID` return the upstream `sbo` signature: a JSON user record, the `incomplete` flag, and a Home object path. Clients using the previous `a{sv}b` reply must decode the JSON string. The homed-specific `GetUserRecordByPID` still returns `a{sv}b`. Home objects also provide the read-only `UnixRecord` and `UserRecord` properties.
 
 An empty name in `GetHomeByName` or `GetUserRecordByName` looks up the calling user's NSS account.
 
