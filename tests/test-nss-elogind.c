@@ -113,6 +113,35 @@ test_elogind_provider_blocked(void)
     g_assert_false(is_blocked());
 }
 
+static void
+assert_user_disposition(uid_t uid, const gchar *expected)
+{
+    struct passwd pw = {
+        .pw_name = (char *) "test-user",
+        .pw_uid = uid,
+        .pw_gid = uid,
+        .pw_gecos = (char *) "Test User",
+        .pw_dir = (char *) "/home/test-user",
+        .pw_shell = (char *) "/bin/bash",
+    };
+    JsonObject *record = rcl_nss_user_record(&pw, "io.systemd.Home");
+
+    g_assert_cmpstr(json_object_get_string_member(record, "disposition"),
+                    ==, expected);
+    json_object_unref(record);
+}
+
+static void
+test_user_disposition(void)
+{
+    assert_user_disposition(0, "intrinsic");
+    assert_user_disposition(42, "system");
+    assert_user_disposition(999, "system");
+    assert_user_disposition(1000, "regular");
+    assert_user_disposition(1002, "regular");
+    assert_user_disposition(65534, "intrinsic");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -128,6 +157,7 @@ main(int argc, char **argv)
             memcpy(&elogind_getpwnam, &symbol, sizeof(elogind_getpwnam));
     }
 
+    g_test_add_func("/userdb/user-disposition", test_user_disposition);
     g_test_add_func("/phase6/nss-lock", test_nss_lock);
     g_test_add_func("/phase6/nss-timeout-lock", test_nss_timeout_lock);
     g_test_add_func("/phase6/repeated-locking", test_repeated_locking);
